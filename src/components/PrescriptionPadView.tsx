@@ -12,6 +12,7 @@ import {
   Minimize2,
   X,
 } from 'lucide-react';
+import html2canvas from 'html2canvas';
 import type { MedicalAnalysisResult } from '../services/geminiMedical';
 
 interface PrescriptionPadViewProps {
@@ -481,14 +482,155 @@ export const PrescriptionPadView: React.FC<PrescriptionPadViewProps> = ({
     return `Ayurveez_Rx_${safeDisease}_${new Date().toISOString().slice(0, 10)}.png`;
   };
 
-  const handleSaveToGallery = () => {
+  /**
+   * Converts any modern CSS color function (oklch, oklab, color-mix, lab, lch)
+   * into standard rgb(...) / rgba(...) strings so html2canvas never fails.
+   */
+  const createColorSanitizer = () => {
+    const cache = new Map<string, string>();
+    const pxCanvas = document.createElement('canvas');
+    pxCanvas.width = 1;
+    pxCanvas.height = 1;
+    const pxCtx = pxCanvas.getContext('2d', { willReadFrequently: true });
+
+    const toRgbString = (rawColor: string): string => {
+      const trimmed = rawColor.trim();
+      if (cache.has(trimmed)) return cache.get(trimmed)!;
+      if (!pxCtx) return 'rgb(15, 23, 42)';
+      try {
+        pxCtx.clearRect(0, 0, 1, 1);
+        pxCtx.fillStyle = 'rgba(0,0,0,0)';
+        pxCtx.fillStyle = trimmed;
+        pxCtx.fillRect(0, 0, 1, 1);
+        const [r, g, b, a] = pxCtx.getImageData(0, 0, 1, 1).data;
+        const res =
+          a === 0
+            ? 'rgba(0, 0, 0, 0)'
+            : a === 255
+            ? `rgb(${r}, ${g}, ${b})`
+            : `rgba(${r}, ${g}, ${b}, ${+(a / 255).toFixed(3)})`;
+        cache.set(trimmed, res);
+        return res;
+      } catch {
+        return 'rgb(15, 23, 42)';
+      }
+    };
+
+    const sanitizeCssString = (val: string): string => {
+      if (!val || typeof val !== 'string') return val;
+      if (
+        !/(oklch|oklab|color-mix|lch|lab|color)\s*\(/i.test(val) &&
+        !/\s+in\s+(oklab|oklch|srgb)/i.test(val)
+      ) {
+        return val;
+      }
+      let out = val;
+      const fnRegex = /\b(color-mix|oklch|oklab|lch|lab|color)\s*\(/i;
+      let guard = 0;
+      while (guard < 100) {
+        guard++;
+        const match = fnRegex.exec(out);
+        if (!match) break;
+        const start = match.index;
+        const openIdx = start + match[0].length - 1;
+        let depth = 0;
+        let end = -1;
+        for (let i = openIdx; i < out.length; i++) {
+          if (out[i] === '(') depth++;
+          else if (out[i] === ')') {
+            depth--;
+            if (depth === 0) {
+              end = i;
+              break;
+            }
+          }
+        }
+        if (end === -1) break;
+        const fnToken = out.slice(start, end + 1);
+        out = out.slice(0, start) + toRgbString(fnToken) + out.slice(end + 1);
+      }
+      out = out.replace(
+        /\s+in\s+(oklab|oklch|srgb|srgb-linear|display-p3|hsl|hwb|lab|lch)\b/gi,
+        ''
+      );
+      return out;
+    };
+
+    return { sanitizeCssString };
+  };
+
+  const captureExactPrescriptionCanvas = async (): Promise<HTMLCanvasElement> => {
+    if (!prescriptionRef.current) {
+      return renderPrescriptionCanvasNative();
+    }
+    await document.fonts?.ready;
+    const { sanitizeCssString } = createColorSanitizer();
+    const origGetComputedStyle = window.getComputedStyle.bind(window);
+
+    // Wrap window.getComputedStyle in a Proxy so html2canvas never receives oklch/oklab strings
+    const wrapComputedStyle = (cs: CSSStyleDeclaration): CSSStyleDeclaration =>
+      new Proxy(cs, {
+        get(target, prop) {
+          if (prop === 'getPropertyValue') {
+            return (name: string) => sanitizeCssString(target.getPropertyValue(name));
+          }
+          const value = (target as any)[prop];
+          if (typeof value === 'function') {
+            return value.bind(target);
+          }
+          if (typeof value === 'string') {
+            return sanitizeCssString(value);
+          }
+          return value;
+        },
+      });
+
+    window.getComputedStyle = ((elt: Element, pseudoElt?: string | null) =>
+      wrapComputedStyle(origGetComputedStyle(elt, pseudoElt))) as typeof window.getComputedStyle;
+
+    try {
+      const targetEl = prescriptionRef.current;
+      const canvas = await html2canvas(targetEl, {
+        scale: 2,
+        useCORS: true,
+        allowTaint: true,
+        backgroundColor: '#ffffff',
+        logging: false,
+        scrollX: 0,
+        scrollY: 0,
+        windowWidth: 960,
+        onclone: (clonedDoc, clonedElement) => {
+          const clonedWin = clonedDoc.defaultView as (Window & typeof globalThis) | null;
+          if (clonedWin && clonedWin.getComputedStyle) {
+            const origCloneGcs = clonedWin.getComputedStyle.bind(clonedWin);
+            clonedWin.getComputedStyle = ((elt: Element, pseudoElt?: string | null) =>
+              wrapComputedStyle(origCloneGcs(elt, pseudoElt))) as typeof window.getComputedStyle;
+          }
+          // Ensure any mobile transform scale on parent wrapper is reset in the clone so full A4 width is captured
+          if (clonedElement && clonedElement.parentElement) {
+            clonedElement.parentElement.style.transform = 'none';
+            clonedElement.parentElement.style.width = '840px';
+            clonedElement.parentElement.style.marginBottom = '0px';
+          }
+          clonedDoc.querySelectorAll('style').forEach((s) => {
+            if (s.textContent) s.textContent = sanitizeCssString(s.textContent);
+          });
+        },
+      });
+      return canvas;
+    } finally {
+      window.getComputedStyle = origGetComputedStyle;
+    }
+  };
+
+  const handleSaveToGallery = async () => {
     setIsSaving(true);
     setSavedSuccess(false);
 
     try {
       const filename = getFilename();
-      // Render synchronously using native 2D canvas so user gesture never expires and oklch never breaks
-      const canvas = renderPrescriptionCanvasNative();
+      // Capture the exact on-screen Prescription Pad DOM design via html2canvas
+      const canvas = await captureExactPrescriptionCanvas();
       const dataUrl = canvas.toDataURL('image/png', 0.98);
       setPreviewImageUrl(dataUrl);
 
@@ -543,21 +685,20 @@ export const PrescriptionPadView: React.FC<PrescriptionPadViewProps> = ({
 
   const handleNativeShareFromModal = async () => {
     try {
-      const canvas = renderPrescriptionCanvasNative();
-      canvas.toBlob(async (blob) => {
-        if (!blob) return;
-        const filename = getFilename();
-        const file = new File([blob], filename, { type: 'image/png' });
-        if (navigator.canShare && navigator.canShare({ files: [file] })) {
-          await navigator.share({
-            files: [file],
-            title: `Ayurveez Healthcare Prescription - ${diseaseInput}`,
-            text: `Prescription for ${diseaseInput} by Dr. Ravi Shankar Kumar, BAMS`,
-          });
-        } else {
-          handleDirectDownloadFromModal();
-        }
-      }, 'image/png');
+      if (!previewImageUrl) return;
+      const res = await fetch(previewImageUrl);
+      const blob = await res.blob();
+      const filename = getFilename();
+      const file = new File([blob], filename, { type: 'image/png' });
+      if (navigator.canShare && navigator.canShare({ files: [file] })) {
+        await navigator.share({
+          files: [file],
+          title: `Ayurveez Healthcare Prescription - ${diseaseInput}`,
+          text: `Prescription for ${diseaseInput} by Dr. Ravi Shankar Kumar, BAMS`,
+        });
+      } else {
+        handleDirectDownloadFromModal();
+      }
     } catch {
       handleDirectDownloadFromModal();
     }
@@ -827,11 +968,23 @@ export const PrescriptionPadView: React.FC<PrescriptionPadViewProps> = ({
                   {result.ayurvedicAnalysis.vyadhiVinischaya}
                 </h3>
               </div>
-              {activeShloka && (
+              {acharyaProto ? (
                 <p className="text-[9.5px] sm:text-[10.5px] text-slate-500 italic">
-                  Ref: {activeShloka.sourceBook} ({activeShloka.chapterAndVerse})
-                  {acharyaProto ? ` • ${acharyaProto.acharyaName}` : ''}
+                  {acharyaProto.acharyaName} • Disease Ref:{' '}
+                  {acharyaProto.isDirectlyMentioned === false || acharyaProto.shlokaReference?.shlokaSanskrit === 'NA'
+                    ? 'NA'
+                    : `${acharyaProto.shlokaReference.sourceBook} (${acharyaProto.shlokaReference.chapterAndVerse})`}{' '}
+                  | Chikitsa Ref:{' '}
+                  {acharyaProto.chikitsaSutra === 'NA' || acharyaProto.chikitsaSutraReference === 'NA'
+                    ? 'NA'
+                    : acharyaProto.chikitsaSutraReference}
                 </p>
+              ) : (
+                activeShloka && (
+                  <p className="text-[9.5px] sm:text-[10.5px] text-slate-500 italic">
+                    Ref: {activeShloka.sourceBook} ({activeShloka.chapterAndVerse})
+                  </p>
+                )
               )}
             </div>
 

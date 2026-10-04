@@ -30,6 +30,7 @@ import {
   Printer,
   Copy,
   Check,
+  ChevronLeft,
   ChevronRight,
   RefreshCw,
   Heart,
@@ -119,6 +120,8 @@ export const RaviAssistantView: React.FC<RaviAssistantViewProps> = ({
   const [isCopiedRx, setIsCopiedRx] = useState(false);
   const [isCopiedDDx, setIsCopiedDDx] = useState(false);
   const [selectedAcharya, setSelectedAcharya] = useState<string>('charaka');
+  const [activeShlokaIndex, setActiveShlokaIndex] = useState<number>(0);
+  const [showAllChikitsaShlokas, setShowAllChikitsaShlokas] = useState<boolean>(false);
   const [confirmedMedicines, setConfirmedMedicines] = useState<Record<string, boolean>>({});
   const [confirmedShodhana, setConfirmedShodhana] = useState<Record<string, boolean>>({});
   const [confirmedInvestigations, setConfirmedInvestigations] = useState<Record<string, boolean>>({});
@@ -194,6 +197,18 @@ export const RaviAssistantView: React.FC<RaviAssistantViewProps> = ({
         notes: notesInput.trim() || undefined,
       });
       setMedicsResult(res);
+      setActiveShlokaIndex(0);
+      if (
+        res.ayurvedicAnalysis.acharyaProtocols &&
+        res.ayurvedicAnalysis.acharyaProtocols[selectedAcharya]?.isDirectlyMentioned === false
+      ) {
+        const firstDirect = Object.keys(res.ayurvedicAnalysis.acharyaProtocols).find(
+          (k) => res.ayurvedicAnalysis.acharyaProtocols?.[k]?.isDirectlyMentioned
+        );
+        if (firstDirect) {
+          setSelectedAcharya(firstDirect);
+        }
+      }
 
       // Pre-check all suggested medicines for prescription builder
       const initChecks: Record<string, boolean> = {};
@@ -1007,18 +1022,42 @@ Doctor: Dr. Ravi Shankar, BAMS`;
           {medicsResult && (() => {
             // Resolve active Acharya protocol if chosen
             const activeAcharyaProtocol = medicsResult.ayurvedicAnalysis.acharyaProtocols?.[selectedAcharya];
+            const isDiseaseMentionedByAcharya = activeAcharyaProtocol
+              ? activeAcharyaProtocol.isDirectlyMentioned !== false
+              : true;
             const currentShloka = activeAcharyaProtocol?.shlokaReference || medicsResult.ayurvedicAnalysis.shlokaReference;
-            const currentChikitsaSutra = activeAcharyaProtocol?.chikitsaSutra || medicsResult.ayurvedicAnalysis.chikitsaSutra;
-            const currentChikitsaSutraRef =
-              activeAcharyaProtocol?.chikitsaSutraReference ||
-              `${currentShloka.sourceBook} (${currentShloka.chapterAndVerse})`;
-            const currentShamana = (activeAcharyaProtocol?.shamanaChikitsa && activeAcharyaProtocol.shamanaChikitsa.length > 0)
-              ? activeAcharyaProtocol.shamanaChikitsa
+            const currentDiseaseRef = activeAcharyaProtocol
+              ? activeAcharyaProtocol.diseaseReference ||
+                (isDiseaseMentionedByAcharya
+                  ? `${currentShloka.sourceBook} (${currentShloka.chapterAndVerse})`
+                  : 'NA')
+              : `${currentShloka.sourceBook} (${currentShloka.chapterAndVerse})`;
+            const currentChikitsaSutra = activeAcharyaProtocol
+              ? activeAcharyaProtocol.chikitsaSutra
+              : medicsResult.ayurvedicAnalysis.chikitsaSutra;
+            const currentChikitsaSutraRef = activeAcharyaProtocol
+              ? activeAcharyaProtocol.chikitsaSutraReference || 'NA'
+              : `${currentShloka.sourceBook} (${currentShloka.chapterAndVerse})`;
+            const chikitsaShlokasList = activeAcharyaProtocol?.chikitsaShlokas || [];
+            const safeShlokaIdx =
+              chikitsaShlokasList.length > 0
+                ? Math.min(activeShlokaIndex, chikitsaShlokasList.length - 1)
+                : 0;
+            const activeChikitsaShlokaItem = chikitsaShlokasList[safeShlokaIdx];
+
+            const currentShamana = activeAcharyaProtocol
+              ? isDiseaseMentionedByAcharya
+                ? activeAcharyaProtocol.shamanaChikitsa
+                : []
               : medicsResult.ayurvedicAnalysis.shamanaChikitsa;
-            const currentShodhana = (activeAcharyaProtocol?.shodhanaChikitsa && activeAcharyaProtocol.shodhanaChikitsa.length > 0)
-              ? activeAcharyaProtocol.shodhanaChikitsa
+            const currentShodhana = activeAcharyaProtocol
+              ? isDiseaseMentionedByAcharya
+                ? activeAcharyaProtocol.shodhanaChikitsa
+                : []
               : medicsResult.ayurvedicAnalysis.shodhanaChikitsa;
-            const currentParaSurgical = activeAcharyaProtocol?.paraSurgicalTherapy || medicsResult.ayurvedicAnalysis.paraSurgicalTherapy;
+            const currentParaSurgical = isDiseaseMentionedByAcharya
+              ? activeAcharyaProtocol?.paraSurgicalTherapy || medicsResult.ayurvedicAnalysis.paraSurgicalTherapy
+              : undefined;
 
             return (
               <div className="space-y-4 animate-in fade-in zoom-in-95">
@@ -1110,7 +1149,10 @@ Doctor: Dr. Ravi Shankar, BAMS`;
                         </label>
                         <select
                           value={selectedAcharya}
-                          onChange={(e) => setSelectedAcharya(e.target.value)}
+                          onChange={(e) => {
+                            setSelectedAcharya(e.target.value);
+                            setActiveShlokaIndex(0);
+                          }}
                           className="text-xs font-extrabold text-emerald-900 dark:text-emerald-100 bg-transparent border-0 cursor-pointer focus:outline-none pr-1"
                         >
                           <option value="charaka" className="text-slate-900 bg-white">Charak Samhita (Acharya Charaka)</option>
@@ -1127,163 +1169,350 @@ Doctor: Dr. Ravi Shankar, BAMS`;
                     </div>
                   </div>
 
-                  {/* Active Acharya Philosophy & Direct Mention Status Banner */}
+                  {/* Active Acharya Disease Reference & Chikitsa Reference Summary Box */}
                   {activeAcharyaProtocol && (
-                    <div className="p-3.5 rounded-2xl bg-teal-50/70 dark:bg-teal-950/30 border border-teal-200 dark:border-teal-800 text-xs space-y-2">
+                    <div className="p-3.5 rounded-2xl bg-teal-50/70 dark:bg-teal-950/30 border border-teal-200 dark:border-teal-800 text-xs space-y-2.5">
                       <div className="flex items-center justify-between flex-wrap gap-2">
                         <span className="text-[10px] uppercase font-extrabold text-teal-800 dark:text-teal-300 tracking-wider">
-                          Classical Acharya Authority: {activeAcharyaProtocol.acharyaName} ({activeAcharyaProtocol.sourceTextbook})
+                          Selected Authority: {activeAcharyaProtocol.acharyaName}
                         </span>
                         <span
                           className={`px-2.5 py-0.5 rounded-full text-[9.5px] font-extrabold ${
-                            activeAcharyaProtocol.isDirectlyMentioned
+                            isDiseaseMentionedByAcharya
                               ? 'bg-emerald-600 text-white'
-                              : 'bg-amber-500 text-white'
+                              : 'bg-rose-600 text-white'
                           }`}
                         >
-                          {activeAcharyaProtocol.isDirectlyMentioned
+                          {isDiseaseMentionedByAcharya
                             ? '✓ Directly Mentioned in This Samhita'
-                            : 'ℹ️ Correlated via Dosha/Lakshanas (Not Named as Separate Chapter)'}
+                            : 'NA — Not Mentioned as Separate Vyadhi by This Acharya'}
                         </span>
                       </div>
-                      {activeAcharyaProtocol.mentionStatusNote && (
-                        <div
-                          className={`p-2 rounded-xl border text-[11px] leading-snug ${
-                            activeAcharyaProtocol.isDirectlyMentioned
-                              ? 'bg-emerald-50/80 dark:bg-emerald-950/40 border-emerald-200 dark:border-emerald-800/60 text-emerald-950 dark:text-emerald-200'
-                              : 'bg-amber-50/90 dark:bg-amber-950/40 border-amber-300 dark:border-amber-700/70 text-amber-950 dark:text-amber-200'
-                          }`}
-                        >
-                          <strong>Samhita Textual Status:</strong> {activeAcharyaProtocol.mentionStatusNote}
+
+                      {/* Accurate Disease Reference & Chikitsa Reference per Selected Acharya */}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
+                        <div className="p-2.5 rounded-xl bg-white dark:bg-slate-900/90 border border-teal-200 dark:border-teal-800/80">
+                          <span className="text-[9.5px] font-extrabold uppercase tracking-wider text-slate-400 block">
+                            Disease Reference ({activeAcharyaProtocol.acharyaName}):
+                          </span>
+                          <span className="text-xs font-extrabold text-slate-900 dark:text-white font-mono mt-0.5 block">
+                            {isDiseaseMentionedByAcharya ? currentDiseaseRef : 'NA'}
+                          </span>
+                        </div>
+                        <div className="p-2.5 rounded-xl bg-white dark:bg-slate-900/90 border border-teal-200 dark:border-teal-800/80">
+                          <span className="text-[9.5px] font-extrabold uppercase tracking-wider text-slate-400 block">
+                            Chikitsa Reference ({activeAcharyaProtocol.acharyaName}):
+                          </span>
+                          <span className="text-xs font-extrabold text-emerald-800 dark:text-emerald-300 font-mono mt-0.5 block">
+                            {isDiseaseMentionedByAcharya && currentChikitsaSutraRef !== 'NA'
+                              ? currentChikitsaSutraRef
+                              : 'NA'}
+                          </span>
+                        </div>
+                      </div>
+
+                      {!isDiseaseMentionedByAcharya && (
+                        <div className="p-2.5 rounded-xl bg-amber-50 dark:bg-amber-950/50 border border-amber-300 dark:border-amber-700 text-[11px] text-amber-950 dark:text-amber-200 flex items-center justify-between flex-wrap gap-2">
+                          <span>
+                            <strong>Note:</strong> {activeAcharyaProtocol.acharyaName} did not codify this disease or its Chikitsa Sutra as a separate chapter (hence shown as <strong>NA</strong>). Switch to an Acharya who directly codified it:
+                          </span>
+                          <div className="flex items-center gap-1.5">
+                            {Object.entries(medicsResult.ayurvedicAnalysis.acharyaProtocols || {})
+                              .filter(([, p]) => p.isDirectlyMentioned)
+                              .map(([k, p]) => (
+                                <button
+                                  key={k}
+                                  type="button"
+                                  onClick={() => {
+                                    setSelectedAcharya(k);
+                                    setActiveShlokaIndex(0);
+                                  }}
+                                  className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-[10px] font-extrabold cursor-pointer shadow-2xs"
+                                >
+                                  View {p.acharyaName}
+                                </button>
+                              ))}
+                          </div>
                         </div>
                       )}
-                      <p className="text-[11px] font-medium text-slate-800 dark:text-slate-200 leading-snug">
-                        <strong>Clinical Philosophy:</strong> {activeAcharyaProtocol.clinicalPhilosophy}
-                      </p>
                     </div>
                   )}
 
-                  {/* Classical Sanskrit Shloka Box */}
+                  {/* Classical Disease Shloka Box */}
                   <div className="p-4 rounded-2xl bg-amber-50/80 dark:bg-amber-950/20 border-2 border-amber-300 dark:border-amber-700/80 space-y-2">
-                    <div className="flex items-center justify-between">
+                    <div className="flex items-center justify-between flex-wrap gap-1">
                       <span className="text-[10px] font-extrabold text-amber-700 dark:text-amber-400 uppercase tracking-wider flex items-center gap-1.5">
                         <BookOpen className="w-3.5 h-3.5" />
-                        Classical Samhita Shloka &amp; Reference:
+                        Classical Samhita Disease Shloka ({activeAcharyaProtocol ? activeAcharyaProtocol.acharyaName : 'Samhita'}):
                       </span>
                       <span className="text-[10.5px] font-bold font-mono text-amber-800 dark:text-amber-300">
-                        {currentShloka.sourceBook} ({currentShloka.chapterAndVerse})
-                        {activeAcharyaProtocol ? ` • ${activeAcharyaProtocol.acharyaName}` : ''}
+                        {!isDiseaseMentionedByAcharya || currentShloka.shlokaSanskrit === 'NA'
+                          ? 'NA'
+                          : `${currentShloka.sourceBook} (${currentShloka.chapterAndVerse})`}
                       </span>
                     </div>
 
-                    <p className="text-base font-bold text-slate-900 dark:text-amber-100 font-serif leading-relaxed text-center py-1">
-                      {currentShloka.shlokaSanskrit}
-                    </p>
+                    {!isDiseaseMentionedByAcharya || currentShloka.shlokaSanskrit === 'NA' ? (
+                      <div className="py-3 text-center">
+                        <span className="inline-block px-4 py-1.5 rounded-xl bg-amber-200/70 dark:bg-amber-900/60 text-amber-950 dark:text-amber-200 font-black text-sm tracking-widest">
+                          NA
+                        </span>
+                        <p className="text-[11px] text-slate-600 dark:text-slate-400 mt-1.5">
+                          Disease not mentioned in {activeAcharyaProtocol?.acharyaName || 'this Acharya'}’s Samhita.
+                        </p>
+                      </div>
+                    ) : (
+                      <>
+                        <p className="text-base font-bold text-slate-900 dark:text-amber-100 font-serif leading-relaxed text-center py-1">
+                          {currentShloka.shlokaSanskrit}
+                        </p>
 
-                    <p className="text-xs italic text-slate-600 dark:text-slate-400 text-center font-mono text-[11px]">
-                      "{currentShloka.shlokaTransliteration}"
-                    </p>
+                        <p className="text-xs italic text-slate-600 dark:text-slate-400 text-center font-mono text-[11px]">
+                          "{currentShloka.shlokaTransliteration}"
+                        </p>
 
-                    <div className="pt-2 border-t border-amber-200 dark:border-amber-800/60 text-[11.5px] text-slate-800 dark:text-slate-300 leading-relaxed">
-                      <strong>Samhita Meaning:</strong> {currentShloka.meaning}
-                    </div>
+                        <div className="pt-2 border-t border-amber-200 dark:border-amber-800/60 text-[11.5px] text-slate-800 dark:text-slate-300 leading-relaxed">
+                          <strong>Samhita Meaning:</strong> {currentShloka.meaning}
+                        </div>
+                      </>
+                    )}
                   </div>
 
-                  {/* Chikitsa Sutra with Acharya Reference */}
-                  <div className="p-3.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-300 dark:border-emerald-700/60 text-xs space-y-1.5">
+                  {/* Chikitsa Sutra & Multiple Treatment Shlokas with Left / Right Scroll Buttons */}
+                  <div className="p-4 rounded-2xl bg-emerald-50 dark:bg-emerald-950/40 border-2 border-emerald-300 dark:border-emerald-700/70 text-xs space-y-2.5">
                     <div className="flex items-center justify-between flex-wrap gap-2">
                       <span className="font-extrabold text-emerald-800 dark:text-emerald-300 uppercase tracking-wider text-[10.5px] flex items-center gap-1.5">
                         <BookOpen className="w-3.5 h-3.5" />
-                        Chikitsa Sutra (Core Treatment Axiom as per {activeAcharyaProtocol ? activeAcharyaProtocol.acharyaName : 'Classical Samhita'}):
+                        Chikitsa Sutra &amp; Treatment Shlokas ({activeAcharyaProtocol ? activeAcharyaProtocol.acharyaName : 'Classical Samhita'}):
                       </span>
-                      <span className="px-2 py-0.5 rounded-md bg-emerald-200/80 dark:bg-emerald-900/80 text-emerald-950 dark:text-emerald-200 font-mono font-bold text-[10px]">
-                        Ref: {currentChikitsaSutraRef}
-                      </span>
+
+                      {isDiseaseMentionedByAcharya && chikitsaShlokasList.length > 1 ? (
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setActiveShlokaIndex((prev) =>
+                                prev > 0 ? prev - 1 : chikitsaShlokasList.length - 1
+                              )
+                            }
+                            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-white dark:bg-slate-800 hover:bg-emerald-100 dark:hover:bg-emerald-900 border border-emerald-300 dark:border-emerald-700 text-emerald-900 dark:text-emerald-200 font-extrabold text-[10.5px] cursor-pointer shadow-2xs transition-all"
+                            title="Previous Chikitsa Shloka"
+                          >
+                            <ChevronLeft className="w-3.5 h-3.5" />
+                            <span>Prev</span>
+                          </button>
+
+                          <span className="px-2.5 py-1 rounded-lg bg-emerald-700 text-white font-mono font-black text-[10.5px]">
+                            Shloka {safeShlokaIdx + 1} / {chikitsaShlokasList.length}
+                          </span>
+
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setActiveShlokaIndex((prev) =>
+                                prev < chikitsaShlokasList.length - 1 ? prev + 1 : 0
+                              )
+                            }
+                            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-white dark:bg-slate-800 hover:bg-emerald-100 dark:hover:bg-emerald-900 border border-emerald-300 dark:border-emerald-700 text-emerald-900 dark:text-emerald-200 font-extrabold text-[10.5px] cursor-pointer shadow-2xs transition-all"
+                            title="Next Chikitsa Shloka"
+                          >
+                            <span>Next</span>
+                            <ChevronRight className="w-3.5 h-3.5" />
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => setShowAllChikitsaShlokas(!showAllChikitsaShlokas)}
+                            className="px-2 py-1 rounded-lg bg-emerald-200/80 dark:bg-emerald-900/80 text-emerald-950 dark:text-emerald-200 font-bold text-[10px] cursor-pointer"
+                          >
+                            {showAllChikitsaShlokas ? 'Single Carousel View' : `Show All (${chikitsaShlokasList.length})`}
+                          </button>
+                        </div>
+                      ) : (
+                        <span className="px-2 py-0.5 rounded-md bg-emerald-200/80 dark:bg-emerald-900/80 text-emerald-950 dark:text-emerald-200 font-mono font-bold text-[10px]">
+                          Ref: {!isDiseaseMentionedByAcharya || currentChikitsaSutra === 'NA' ? 'NA' : currentChikitsaSutraRef}
+                        </span>
+                      )}
                     </div>
-                    <p className="text-[12px] text-slate-900 dark:text-slate-100 font-serif font-semibold leading-relaxed">
-                      {currentChikitsaSutra}
-                    </p>
+
+                    {!isDiseaseMentionedByAcharya || currentChikitsaSutra === 'NA' ? (
+                      <div className="py-3 text-center">
+                        <span className="inline-block px-4 py-1.5 rounded-xl bg-emerald-200/70 dark:bg-emerald-900/60 text-emerald-950 dark:text-emerald-200 font-black text-sm tracking-widest">
+                          NA
+                        </span>
+                        <p className="text-[11px] text-slate-600 dark:text-slate-400 mt-1.5">
+                          Chikitsa Sutra not mentioned for this disease by {activeAcharyaProtocol?.acharyaName || 'this Acharya'}.
+                        </p>
+                      </div>
+                    ) : chikitsaShlokasList.length > 0 ? (
+                      showAllChikitsaShlokas ? (
+                        <div className="space-y-2.5 pt-1">
+                          {chikitsaShlokasList.map((item, idx) => (
+                            <div
+                              key={idx}
+                              className="p-3 rounded-xl bg-white/90 dark:bg-slate-900/90 border border-emerald-200 dark:border-emerald-800 space-y-1.5"
+                            >
+                              <div className="flex items-center justify-between flex-wrap gap-1">
+                                <span className="text-[10.5px] font-extrabold text-emerald-800 dark:text-emerald-300">
+                                  {item.title}
+                                </span>
+                                <span className="text-[10px] font-mono font-bold text-amber-800 dark:text-amber-300 bg-amber-100/80 dark:bg-amber-950/60 px-2 py-0.5 rounded">
+                                  📖 {item.reference}
+                                </span>
+                              </div>
+                              <p className="text-sm font-bold text-slate-900 dark:text-amber-100 font-serif text-center py-0.5">
+                                {item.shlokaSanskrit}
+                              </p>
+                              <p className="text-[10.5px] italic font-mono text-slate-500 dark:text-slate-400 text-center">
+                                "{item.shlokaTransliteration}"
+                              </p>
+                              <p className="text-[11px] text-slate-700 dark:text-slate-300 pt-1 border-t border-slate-100 dark:border-slate-800">
+                                <strong>Chikitsa Meaning:</strong> {item.meaning}
+                              </p>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        activeChikitsaShlokaItem && (
+                          <div className="p-3.5 rounded-xl bg-white/90 dark:bg-slate-900/90 border border-emerald-200 dark:border-emerald-800 space-y-2 transition-all">
+                            <div className="flex items-center justify-between flex-wrap gap-1">
+                              <span className="text-[11px] font-extrabold text-emerald-800 dark:text-emerald-300">
+                                {activeChikitsaShlokaItem.title}
+                              </span>
+                              <span className="text-[10px] font-mono font-bold text-amber-800 dark:text-amber-300 bg-amber-100/80 dark:bg-amber-950/60 px-2 py-0.5 rounded">
+                                📖 Ref: {activeChikitsaShlokaItem.reference}
+                              </span>
+                            </div>
+                            <p className="text-sm sm:text-base font-bold text-slate-900 dark:text-amber-100 font-serif text-center py-1">
+                              {activeChikitsaShlokaItem.shlokaSanskrit}
+                            </p>
+                            <p className="text-[11px] italic font-mono text-slate-600 dark:text-slate-400 text-center">
+                              "{activeChikitsaShlokaItem.shlokaTransliteration}"
+                            </p>
+                            <div className="pt-1.5 border-t border-emerald-100 dark:border-emerald-800/60 text-[11.5px] text-slate-800 dark:text-slate-200 leading-relaxed">
+                              <strong>Chikitsa Meaning:</strong> {activeChikitsaShlokaItem.meaning}
+                            </div>
+
+                            {/* Numbered Shloka Dots / Quick Selector */}
+                            <div className="flex items-center justify-center gap-1.5 pt-1">
+                              {chikitsaShlokasList.map((s, idx) => (
+                                <button
+                                  key={idx}
+                                  type="button"
+                                  onClick={() => setActiveShlokaIndex(idx)}
+                                  className={`px-2 py-0.5 rounded-md text-[10px] font-extrabold cursor-pointer transition-all ${
+                                    idx === safeShlokaIdx
+                                      ? 'bg-emerald-700 text-white shadow-2xs'
+                                      : 'bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 hover:bg-emerald-200'
+                                  }`}
+                                  title={s.title}
+                                >
+                                  Shloka {idx + 1}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        )
+                      )
+                    ) : (
+                      <p className="text-[12px] text-slate-900 dark:text-slate-100 font-serif font-semibold leading-relaxed">
+                        {currentChikitsaSutra}
+                      </p>
+                    )}
                   </div>
 
-                  {/* Shamana Chikitsa (Aushadha Prescriptions) with Ticks & Classical Reference */}
+                  {/* Shamana Chikitsa (Complete Textbook Aushadha Formulations) */}
                   <div className="space-y-2">
                     <div className="flex items-center justify-between flex-wrap gap-1">
                       <h4 className="text-xs font-bold uppercase tracking-wider text-slate-900 dark:text-white">
-                        Shamana Aushadha (Internal Formulations as per {activeAcharyaProtocol ? activeAcharyaProtocol.acharyaName : 'Classical Texts'})
+                        Shamana Aushadha — Complete Textbook Formulations ({activeAcharyaProtocol ? activeAcharyaProtocol.acharyaName : 'Classical Texts'})
                       </h4>
                       <span className="text-[10px] text-slate-400">
-                        Tick to include in Dr. Ravi’s confirmed Rx
+                        {currentShamana.length > 0
+                          ? `${currentShamana.length} Textbook Yogas • Tick to include in Rx`
+                          : 'NA for this Acharya'}
                       </span>
                     </div>
 
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-xs">
-                      {currentShamana.map((med, idx) => {
-                        const medRef =
-                          (med as { reference?: string }).reference ||
-                          (activeAcharyaProtocol
-                            ? `${activeAcharyaProtocol.sourceTextbook} (${activeAcharyaProtocol.acharyaName})`
-                            : `${currentShloka.sourceBook} (${currentShloka.chapterAndVerse})`);
-                        return (
-                          <div
-                            key={idx}
-                            onClick={() =>
-                              setConfirmedMedicines({
-                                ...confirmedMedicines,
-                                [med.medicineName]:
-                                  confirmedMedicines[med.medicineName] === false
-                                    ? true
-                                    : !confirmedMedicines[med.medicineName],
-                              })
-                            }
-                            className={`p-3 rounded-2xl border transition-all cursor-pointer ${
-                              confirmedMedicines[med.medicineName] !== false
-                                ? 'bg-emerald-50/70 dark:bg-emerald-950/30 border-emerald-400 dark:border-emerald-600 shadow-2xs'
-                                : 'opacity-50 bg-slate-50 dark:bg-slate-800/40 border-slate-200 dark:border-slate-800'
-                            }`}
-                          >
-                            <div className="flex items-start justify-between gap-2">
-                              <div>
-                                <div className="flex items-center gap-1.5 flex-wrap">
-                                  <span className="text-[9px] font-bold uppercase text-emerald-700 dark:text-emerald-400">
-                                    {med.category}
-                                  </span>
-                                  <span className="text-[9.5px] font-mono font-bold px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-950/70 text-amber-900 dark:text-amber-300 border border-amber-300/70 dark:border-amber-800">
-                                    📖 {medRef}
-                                  </span>
+                    {currentShamana.length === 0 ? (
+                      <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-800 text-center space-y-1">
+                        <span className="inline-block px-4 py-1 rounded-xl bg-slate-200 dark:bg-slate-700 text-slate-800 dark:text-slate-200 font-black text-sm tracking-widest">
+                          NA
+                        </span>
+                        <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                          No separate Shamana Aushadhi for this disease in {activeAcharyaProtocol?.acharyaName}’s Samhita.
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-xs">
+                        {currentShamana.map((med, idx) => {
+                          const medRef =
+                            (med as { reference?: string }).reference ||
+                            (activeAcharyaProtocol
+                              ? `${activeAcharyaProtocol.sourceTextbook} (${activeAcharyaProtocol.acharyaName})`
+                              : `${currentShloka.sourceBook} (${currentShloka.chapterAndVerse})`);
+                          return (
+                            <div
+                              key={idx}
+                              onClick={() =>
+                                setConfirmedMedicines({
+                                  ...confirmedMedicines,
+                                  [med.medicineName]:
+                                    confirmedMedicines[med.medicineName] === false
+                                      ? true
+                                      : !confirmedMedicines[med.medicineName],
+                                })
+                              }
+                              className={`p-3 rounded-2xl border transition-all cursor-pointer ${
+                                confirmedMedicines[med.medicineName] !== false
+                                  ? 'bg-emerald-50/70 dark:bg-emerald-950/30 border-emerald-400 dark:border-emerald-600 shadow-2xs'
+                                  : 'opacity-50 bg-slate-50 dark:bg-slate-800/40 border-slate-200 dark:border-slate-800'
+                              }`}
+                            >
+                              <div className="flex items-start justify-between gap-2">
+                                <div>
+                                  <div className="flex items-center gap-1.5 flex-wrap">
+                                    <span className="text-[9px] font-bold uppercase text-emerald-700 dark:text-emerald-400">
+                                      {med.category}
+                                    </span>
+                                    <span className="text-[9.5px] font-mono font-bold px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-950/70 text-amber-900 dark:text-amber-300 border border-amber-300/70 dark:border-amber-800">
+                                      📖 {medRef}
+                                    </span>
+                                  </div>
+                                  <h5 className="text-xs font-extrabold text-slate-900 dark:text-white mt-0.5">
+                                    {med.medicineName}
+                                  </h5>
                                 </div>
-                                <h5 className="text-xs font-extrabold text-slate-900 dark:text-white mt-0.5">
-                                  {med.medicineName}
-                                </h5>
+                                <span
+                                  className={`w-4 h-4 rounded-md flex items-center justify-center text-[10px] font-bold shrink-0 ${
+                                    confirmedMedicines[med.medicineName] !== false
+                                      ? 'bg-emerald-600 text-white'
+                                      : 'border border-slate-400'
+                                  }`}
+                                >
+                                  ✓
+                                </span>
                               </div>
-                              <span
-                                className={`w-4 h-4 rounded-md flex items-center justify-center text-[10px] font-bold shrink-0 ${
-                                  confirmedMedicines[med.medicineName] !== false
-                                    ? 'bg-emerald-600 text-white'
-                                    : 'border border-slate-400'
-                                }`}
-                              >
-                                ✓
-                              </span>
-                            </div>
 
-                            <div className="mt-2 space-y-0.5 text-[11px] text-slate-700 dark:text-slate-300">
-                              <p>
-                                <strong>Dose:</strong> {med.dosage}
-                              </p>
-                              <p>
-                                <strong>Anupana:</strong> {med.anupana}
-                              </p>
-                              <p>
-                                <strong>Timing:</strong> {med.timing}
-                              </p>
-                              <p className="text-[10px] text-slate-500 italic pt-0.5">
-                                {med.indications}
-                              </p>
+                              <div className="mt-2 space-y-0.5 text-[11px] text-slate-700 dark:text-slate-300">
+                                <p>
+                                  <strong>Dose:</strong> {med.dosage}
+                                </p>
+                                <p>
+                                  <strong>Anupana:</strong> {med.anupana}
+                                </p>
+                                <p>
+                                  <strong>Timing:</strong> {med.timing}
+                                </p>
+                                <p className="text-[10px] text-slate-500 italic pt-0.5">
+                                  {med.indications}
+                                </p>
+                              </div>
                             </div>
-                          </div>
-                        );
-                      })}
-                    </div>
+                          );
+                        })}
+                      </div>
+                    )}
                   </div>
 
                   {/* Shodhana (Panchakarma) with Ticks & Para-Surgical (Agnikarma/Viddhakarma) */}
