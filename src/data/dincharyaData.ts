@@ -1,0 +1,133 @@
+export interface DinacharyaRoutineItem {
+  id: string;
+  sanskritName: string;
+  englishTitle: string;
+  timeWindow: string;
+  category: 'morning' | 'purification' | 'exercise' | 'nourishment' | 'night';
+  doshaBenefit: string;
+  description: string;
+  shlokaReference: string;
+}
+
+export const DINCHARYA_ROUTINE: DinacharyaRoutineItem[] = [
+  {
+    id: 'brahma_muhurta',
+    sanskritName: 'Brahma Muhurta Jagrana (ब्राह्ममुहूर्ते जागरण)',
+    englishTitle: 'Awakening at Brahma Muhurta',
+    timeWindow: '4:30 AM - 5:30 AM',
+    category: 'morning',
+    doshaBenefit: 'Vata clarity, Sattva Guna activation',
+    description: 'Wake up 1.5 hours before sunrise when the atmosphere is rich in pure nascent oxygen and calm spiritual energy.',
+    shlokaReference: 'ब्राह्मे मुहूर्ते उत्तिष्ठेत् स्वस्थो रक्षार्थम् आयुषः (Ashtanga Hridaya)',
+  },
+  {
+    id: 'ushapan',
+    sanskritName: 'Ushapan (उषःपान)',
+    englishTitle: 'Warm Water / Copper Water Consumption',
+    timeWindow: '5:00 AM - 5:45 AM',
+    category: 'morning',
+    doshaBenefit: 'Kindles Agni, stimulates Apana Vayu peristalsis',
+    description: 'Drink 1-2 glasses of lukewarm or copper vessel water on an empty stomach to gently flush metabolic Ama and cleanse bowels.',
+    shlokaReference: 'प्रातःकाले पिबेद्वारि... रोगा न जायन्ते (Yogaratnakara)',
+  },
+  {
+    id: 'danta_dhavan',
+    sanskritName: 'Danta Dhavana (दन्तधावन)',
+    englishTitle: 'Herbal Tooth Brushing',
+    timeWindow: '5:30 AM - 6:00 AM',
+    category: 'purification',
+    doshaBenefit: 'Reduces oral Kapha, freshens breath',
+    description: 'Brush teeth with astringent, bitter, or pungent herbal powders (Khadira, Neem, Babool, Triphala) to eliminate stickiness.',
+    shlokaReference: 'कषायं तिक्तं कटुकं चूर्णैर्वा दन्तधावनम् (Charaka Samhita)',
+  },
+  {
+    id: 'jihwa_nirlekhana',
+    sanskritName: 'Jihwa Nirlekhana (जिह्वा निर्लेखन)',
+    englishTitle: 'Tongue Scraping (Copper or Silver)',
+    timeWindow: '5:35 AM - 6:05 AM',
+    category: 'purification',
+    doshaBenefit: 'Stimulates taste buds (Bodhaka Kapha), removes white Ama coating',
+    description: 'Gently scrape tongue from root to tip 5-7 times using a curved copper, silver, or brass scraper to eliminate digestive toxins.',
+    shlokaReference: 'जिह्वामूलगतं मलं हन्ति... रुचिमुत्पादयति (Sushruta Samhita)',
+  },
+  {
+    id: 'gandusha_kavala',
+    sanskritName: 'Gandusha & Kavala (गण्डूष - कवल)',
+    englishTitle: 'Medicated Oil Pulling',
+    timeWindow: '6:00 AM - 6:15 AM',
+    category: 'purification',
+    doshaBenefit: 'Strengthens jaws, teeth, gums, voice & prevents dental caries',
+    description: 'Hold warm sesame oil (or Arimedadi Taila) in the mouth for 5-10 minutes until tears form or nostrils water, then spit out.',
+    shlokaReference: 'हनुबलं स्वरबलं वदनोपचयः परः (Charaka Samhita)',
+  },
+  {
+    id: 'nasya_kriya',
+    sanskritName: 'Pratimarsa Nasya (प्रतिमर्श नस्य)',
+    englishTitle: 'Nasal Oil Instillation (Anu Taila)',
+    timeWindow: '6:15 AM - 6:30 AM',
+    category: 'purification',
+    doshaBenefit: 'Nourishes brain, prevents gray hair, hair fall & sinus stiffness',
+    description: 'Instill 2 drops of lukewarm Anu Taila or pure cow ghee into each nostril and gently inhale, then massage temples.',
+    shlokaReference: 'नासा हि शिरसो द्वारं (Ashtanga Hridaya)',
+  },
+  {
+    id: 'abhyanga',
+    sanskritName: 'Abhyanga (अभ्यङ्ग)',
+    englishTitle: 'Full Body Warm Herbal Oil Massage',
+    timeWindow: '6:30 AM - 7:00 AM',
+    category: 'nourishment',
+    doshaBenefit: 'Pacifies Vata, tones muscles, lubricates joints, imparts longevity',
+    description: 'Massage whole body with warm sesame oil or Mahanarayana oil, especially head (Shiro), ears (Karna), and feet (Pada).',
+    shlokaReference: 'अभ्यङ्गमाचरेन्नित्यं स जराश्रमवातहा (Ashtanga Hridaya)',
+  },
+  {
+    id: 'vyayama',
+    sanskritName: 'Vyayama & Surya Namaskar (व्यायाम)',
+    englishTitle: 'Daily Exercise to Half Strength (Ardha Shakti)',
+    timeWindow: '7:00 AM - 7:30 AM',
+    category: 'exercise',
+    doshaBenefit: 'Burns excess Kapha, stokes digestive Agni, builds endurance',
+    description: 'Perform 12 rounds of Surya Namaskar, calisthenics, or brisk walk until perspiration appears on forehead, armpits, and nose.',
+    shlokaReference: 'लाघवं कर्मसामर्थ्यं दीप्तोऽग्निर्मेदसः क्षयः (Charaka Samhita)',
+  },
+  {
+    id: 'snana',
+    sanskritName: 'Snana (स्नान)',
+    englishTitle: 'Purifying Warm Bath',
+    timeWindow: '7:30 AM - 8:00 AM',
+    category: 'purification',
+    doshaBenefit: 'Eliminates fatigue, enhances Ojas, stimulates appetite',
+    description: 'Bathe in warm water for body and lukewarm/cool water for head to protect eyesight and hair roots.',
+    shlokaReference: 'दीपनं वृष्यमायुष्यं स्नानमूर्जाबलप्रदम् (Charaka Samhita)',
+  },
+  {
+    id: 'pranayama_dhyana',
+    sanskritName: 'Pranayama & Sandhya Dhyana (प्राणायाम एवं ध्यान)',
+    englishTitle: 'Breathwork & Meditation',
+    timeWindow: '8:00 AM - 8:30 AM',
+    category: 'morning',
+    doshaBenefit: 'Prana Vayu synchronization, mental tranquility (Sattva)',
+    description: '15-20 minutes of Nadi Shodhana (Alternate Nostril), Bhramari, and silent breath awareness.',
+    shlokaReference: 'चले वाते चलं चित्तं निश्चले निश्चलं भवेत् (Hatha Yoga Pradipika)',
+  },
+  {
+    id: 'sattvic_ahara',
+    sanskritName: 'Sattvic Ahara (सात्त्विक आहार)',
+    englishTitle: 'Mindful Fresh Nutritious Meals',
+    timeWindow: '8:30 AM & 1:00 PM',
+    category: 'nourishment',
+    doshaBenefit: 'Balances all three Doshas (Tridoshahara)',
+    description: 'Eat warm, freshly cooked foods containing all six tastes (Shadrasa), filling half stomach with solid, 1/4th liquid, 1/4th empty for Vata.',
+    shlokaReference: 'हिताशी स्यान् मिताशी स्यात् कालभोजी जितेन्द्रियः (Charaka Samhita)',
+  },
+  {
+    id: 'ratricharya_nidra',
+    sanskritName: 'Ratricharya & Sukha Nidra (रात्रिचर्या एवं सुखनिद्रा)',
+    englishTitle: 'Evening Wind-down & Restful Sleep',
+    timeWindow: '9:30 PM - 10:00 PM',
+    category: 'night',
+    doshaBenefit: 'Ojas replenishment, cellular repair, Kapha rest phase',
+    description: 'Unplug screens by 9:30 PM. Drink warm nutmeg milk or Triphala kwath, wash feet with cool water, and sleep on left lateral side (Vamakukshi).',
+    shlokaReference: 'निद्रायतं सुखं दुःखं पुष्टिः कार्श्यं बलाबलम् (Charaka Samhita)',
+  },
+];

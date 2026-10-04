@@ -1,0 +1,6 @@
+{
+  "name": "Dr. Ravi Shankar - LifeOS & Medical HQ",
+  "description": "All-in-one personal Life OS for Dr. Ravi Shankar (BAMS Doctor): Google Calendar sync, clinical roadmap, clinical & personal notes, expense manager, habits, life journey corners, and Google Cloud sync.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
