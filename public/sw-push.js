@@ -1,10 +1,56 @@
-// Service Worker Push & Local Notification Handler for Ravi’s Assistant
+// Service Worker Push & Offline Handler for Ravi’s Assistant
+const CACHE_NAME = 'ravi-assistant-cache-v2';
+const PRECACHE_ASSETS = [
+  '/',
+  '/index.html',
+  '/manifest.json',
+  '/logo.png',
+  '/pwa-192x192.png',
+  '/pwa-512x512.png',
+  '/pwa-maskable-512x512.png',
+  '/apple-touch-icon.png',
+];
+
+self.addEventListener('install', (event) => {
+  self.skipWaiting();
+  event.waitUntil(
+    caches.open(CACHE_NAME).then((cache) => {
+      return cache.addAll(PRECACHE_ASSETS).catch(() => {});
+    })
+  );
+});
+
+self.addEventListener('activate', (event) => {
+  event.waitUntil(self.clients.claim());
+});
+
+self.addEventListener('fetch', (event) => {
+  if (event.request.method !== 'GET') return;
+  const url = new URL(event.request.url);
+  if (url.pathname.startsWith('/api/')) return;
+
+  event.respondWith(
+    fetch(event.request)
+      .then((response) => {
+        if (response && response.status === 200 && response.type === 'basic') {
+          const responseClone = response.clone();
+          caches.open(CACHE_NAME).then((cache) => {
+            cache.put(event.request, responseClone).catch(() => {});
+          });
+        }
+        return response;
+      })
+      .catch(() => {
+        return caches.match(event.request).then((cached) => cached || caches.match('/index.html'));
+      })
+  );
+});
 
 self.addEventListener('push', (event) => {
   let payload = {
     title: 'Ravi’s Assistant',
     body: 'You have an upcoming reminder in Ravi’s Assistant.',
-    icon: '/logo.png',
+    icon: '/pwa-192x192.png',
     badge: '/pwa-192x192.png',
     tag: 'ravi-assistant-push',
     data: { tab: 'home', url: '/' },
@@ -21,7 +67,7 @@ self.addEventListener('push', (event) => {
 
   const options = {
     body: payload.body,
-    icon: payload.icon || '/logo.png',
+    icon: payload.icon || '/pwa-192x192.png',
     badge: payload.badge || '/pwa-192x192.png',
     tag: payload.tag || `ravi-notif-${Date.now()}`,
     vibrate: [200, 100, 200],
@@ -44,7 +90,7 @@ self.addEventListener('message', (event) => {
 
   event.waitUntil(
     self.registration.showNotification(title, {
-      icon: '/logo.png',
+      icon: '/pwa-192x192.png',
       badge: '/pwa-192x192.png',
       vibrate: [200, 100, 200],
       ...options,

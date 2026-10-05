@@ -1,8 +1,11 @@
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import path from 'path';
+import {fileURLToPath} from 'url';
 import {defineConfig} from 'vite';
 import {VitePWA} from 'vite-plugin-pwa';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 export default defineConfig(() => {
   return {
@@ -37,12 +40,6 @@ export default defineConfig(() => {
           categories: ['medical', 'finance', 'productivity', 'lifestyle'],
           icons: [
             {
-              src: '/logo.png',
-              sizes: '192x192',
-              type: 'image/png',
-              purpose: 'any',
-            },
-            {
               src: '/pwa-192x192.png',
               sizes: '192x192',
               type: 'image/png',
@@ -55,16 +52,16 @@ export default defineConfig(() => {
               purpose: 'any',
             },
             {
+              src: '/logo.png',
+              sizes: '512x512',
+              type: 'image/png',
+              purpose: 'any',
+            },
+            {
               src: '/pwa-maskable-512x512.png',
               sizes: '512x512',
               type: 'image/png',
               purpose: 'maskable',
-            },
-            {
-              src: '/icon.svg',
-              sizes: 'any',
-              type: 'image/svg+xml',
-              purpose: 'any',
             },
           ],
           shortcuts: [
@@ -94,6 +91,7 @@ export default defineConfig(() => {
         workbox: {
           maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
           importScripts: ['/sw-push.js'],
+          navigateFallbackDenylist: [/^\/api\//],
           globPatterns: ['**/*.{js,css,html,ico,png,jpg,svg,woff,woff2}'],
           runtimeCaching: [
             {
@@ -128,7 +126,6 @@ export default defineConfig(() => {
         },
         devOptions: {
           enabled: true,
-          type: 'module',
         },
       }),
     ],
