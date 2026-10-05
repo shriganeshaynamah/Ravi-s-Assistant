@@ -56,6 +56,13 @@ import { JourneyCornersView } from './components/JourneyCornersView';
 import { CloudSyncModal } from './components/CloudSyncModal';
 import { FloatingAIAssistant } from './components/FloatingAIAssistant';
 import { RaviAssistantView } from './components/RaviAssistantView';
+import { PWASplashScreen } from './components/PWASplashScreen';
+import { OfflineIndicator } from './components/PWAInstallButton';
+import {
+  evaluateAndDispatchSmartNotifications,
+  sendDevicePushNotification,
+  ensurePushServiceWorker,
+} from './services/pushNotifications';
 
 export default function App() {
   const [user, setUser] = useState<User | null>(() => getSavedUser());
@@ -65,7 +72,32 @@ export default function App() {
     return getStoredData<boolean>(STORAGE_KEYS.THEME, false);
   });
 
-  const [activeFeature, setActiveFeature] = useState<FeatureTab>('home');
+  const [activeFeature, setActiveFeature] = useState<FeatureTab>(() => {
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      const tab = params.get('tab') as FeatureTab | null;
+      if (
+        tab &&
+        [
+          'home',
+          'assistant',
+          'keeptodo',
+          'expense',
+          'loans',
+          'investments',
+          'roadmap',
+          'notes',
+          'calendar',
+          'tools',
+          'dinacharya',
+          'corners',
+        ].includes(tab)
+      ) {
+        return tab;
+      }
+    }
+    return 'home';
+  });
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
   const [isCloudSyncOpen, setIsCloudSyncOpen] = useState(false);
@@ -217,8 +249,51 @@ export default function App() {
       if (snap.journalEntries) setJournalEntries(snap.journalEntries);
     });
 
-    return () => unsub();
+    ensurePushServiceWorker();
+
+    const handleNavigateTab = (e: Event) => {
+      const customEvt = e as CustomEvent<FeatureTab>;
+      if (customEvt.detail) {
+        setActiveFeature(customEvt.detail);
+      }
+    };
+
+    const handleServiceWorkerMessage = (event: MessageEvent) => {
+      if (event.data && event.data.type === 'NOTIFICATION_CLICK' && event.data.tab) {
+        setActiveFeature(event.data.tab as FeatureTab);
+      }
+    };
+
+    window.addEventListener('ravi_navigate_tab', handleNavigateTab);
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.addEventListener('message', handleServiceWorkerMessage);
+    }
+
+    return () => {
+      unsub();
+      window.removeEventListener('ravi_navigate_tab', handleNavigateTab);
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.removeEventListener('message', handleServiceWorkerMessage);
+      }
+    };
   }, []);
+
+  // Automatically evaluate Loan EMI Due, Keep To-Do, and Calendar notifications & dispatch Push Alerts
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      evaluateAndDispatchSmartNotifications({
+        loans,
+        tasks,
+        events,
+        existingNotifications: notifications,
+      }).then((merged) => {
+        if (merged.length !== notifications.length) {
+          setNotifications(merged);
+        }
+      });
+    }, 1500);
+    return () => clearTimeout(timer);
+  }, [loans, tasks, events]);
 
   // Save changes to storage & auto-sync to cloud
   useEffect(() => {
@@ -364,6 +439,12 @@ export default function App() {
         isDark ? 'bg-slate-950 text-slate-100 dark' : 'bg-[#F8F9FA] text-slate-800'
       }`}
     >
+      {/* PWA Cold Launch Splash Screen */}
+      <PWASplashScreen />
+
+      {/* Offline Status Banner */}
+      <OfflineIndicator />
+
       {/* App Header (Structured with Dr. Ravi Shankar brand & live cloud auto-save) */}
       <AppHeader
         onOpenDrawer={() => setIsDrawerOpen(true)}
@@ -406,7 +487,15 @@ export default function App() {
             }
             onAddExpense={(e) => setExpenses((prev) => [e, ...prev])}
             onDeleteExpense={(id) => setExpenses((prev) => prev.filter((e) => e.id !== id))}
-            onAddLoan={(l) => setLoans((prev) => [l, ...prev])}
+            onAddLoan={(l) => {
+              setLoans((prev) => [l, ...prev]);
+              sendDevicePushNotification(`💳 Loan Added: ${l.title}`, {
+                body: `Lender: ${l.lender} • EMI Due Day: ${l.dueDateDay || 5}th of every month.`,
+                tag: `loan-created-${l.id}`,
+                tab: 'loans',
+                force: true,
+              });
+            }}
             onUpdateLoan={(l) => setLoans((prev) => prev.map((item) => (item.id === l.id ? l : item)))}
             onDeleteLoan={(id) => setLoans((prev) => prev.filter((l) => l.id !== id))}
             onAddInvestment={(i) => setInvestments((prev) => [i, ...prev])}
@@ -446,7 +535,15 @@ export default function App() {
         {activeFeature === 'keeptodo' && (
           <KeepToDoView
             tasks={tasks}
-            onAddTask={(t) => setTasks((prev) => [t, ...prev])}
+            onAddTask={(t) => {
+              setTasks((prev) => [t, ...prev]);
+              sendDevicePushNotification(`✅ Keep To-Do Added: ${t.text}`, {
+                body: `Due: ${t.dueDate || 'Today'} • Priority: ${t.priority.toUpperCase()}`,
+                tag: `todo-created-${t.id}`,
+                tab: 'keeptodo',
+                force: true,
+              });
+            }}
             onToggleTask={handleToggleTask}
             onUpdateTask={(t) => setTasks((prev) => prev.map((item) => (item.id === t.id ? t : item)))}
             onDeleteTask={(id) => setTasks((prev) => prev.filter((item) => item.id !== id))}
@@ -472,7 +569,15 @@ export default function App() {
           <CalendarView
             events={events}
             user={user}
-            onAddEvent={(e) => setEvents((prev) => [e, ...prev])}
+            onAddEvent={(e) => {
+              setEvents((prev) => [e, ...prev]);
+              sendDevicePushNotification(`📅 Calendar Event Scheduled: ${e.title}`, {
+                body: `Starts: ${e.startDate.replace('T', ' ')}${e.location ? ` • ${e.location}` : ''}`,
+                tag: `cal-created-${e.id}`,
+                tab: 'calendar',
+                force: true,
+              });
+            }}
             onDeleteEvent={(id) => setEvents((prev) => prev.filter((e) => e.id !== id))}
             onUpdateEvent={(e) => setEvents((prev) => prev.map((item) => (item.id === e.id ? e : item)))}
             onRequireAuth={() => setIsCloudSyncOpen(true)}
@@ -582,6 +687,10 @@ export default function App() {
         notifications={notifications}
         onMarkAsRead={handleMarkNotificationAsRead}
         onClearAll={handleClearAllNotifications}
+        loans={loans}
+        tasks={tasks}
+        events={events}
+        onNavigate={(tab) => setActiveFeature(tab)}
         isDark={isDark}
       />
 

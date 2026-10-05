@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Menu, Bell, Cloud, Palette, Check } from 'lucide-react';
 import type { User } from 'firebase/auth';
+import { PWAInstallButton } from './PWAInstallButton';
 
 interface AppHeaderProps {
   onOpenDrawer: () => void;
@@ -150,8 +151,9 @@ export const AppHeader: React.FC<AppHeaderProps> = ({
           </div>
         </div>
 
-        {/* Right: Theme Color Picker & Notification Bell */}
+        {/* Right: PWA Install Button, Theme Color Picker & Notification Bell */}
         <div className="flex items-center gap-1.5 relative">
+          <PWAInstallButton compact />
           {/* Website Color Picker Button */}
           <div className="relative">
             <button

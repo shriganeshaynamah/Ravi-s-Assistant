@@ -24,6 +24,7 @@ import {
   BookOpen,
 } from 'lucide-react';
 import type { User } from 'firebase/auth';
+import { PWAInstallButton } from './PWAInstallButton';
 
 export type FeatureTab =
   | 'home'
@@ -167,6 +168,9 @@ export const HamburgerDrawer: React.FC<HamburgerDrawerProps> = ({
               Drive / Sheets
             </span>
           </button>
+
+          {/* In-App PWA Install Button for Ravi's Assistant */}
+          <PWAInstallButton />
 
           {/* Google Auth status bar */}
           <div className="mt-2.5 pt-2 border-t border-white/10 flex items-center justify-between text-xs">

@@ -187,10 +187,11 @@ export interface AppNotification {
   id: string;
   title: string;
   message: string;
-  type: 'event' | 'loan' | 'exam' | 'sip';
+  type: 'event' | 'loan' | 'exam' | 'sip' | 'todo';
   date: string;
   isRead: boolean;
   badge?: string;
+  targetTab?: 'loans' | 'keeptodo' | 'calendar' | 'expense' | 'roadmap' | 'home';
 }
 
 export interface DinacharyaLog {

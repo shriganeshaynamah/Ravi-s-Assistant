@@ -1407,8 +1407,8 @@ export const fetchFromMasterGoogleSheet = async (): Promise<{
         );
 
         const status: LoanItem['status'] =
-          rawStatus === 'paid' || rawStatus === 'closed'
-            ? 'closed'
+          rawStatus === 'paid' || rawStatus === 'closed' || rawStatus === 'full_paid'
+            ? 'full_paid'
             : rawStatus === 'partially_paid'
             ? 'partially_paid'
             : 'active';
