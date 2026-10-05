@@ -24,6 +24,8 @@ import type {
   ChecklistTask,
   JournalEntry,
   DinacharyaLog,
+  RoadmapMilestone,
+  AppNotification,
 } from '../types';
 
 export const MASTER_SHEET_KEY = 'ayurlife_master_spreadsheet_id';
@@ -50,6 +52,7 @@ export const setCustomMasterSheetId = (idOrUrl: string): string | null => {
 };
 
 export interface MultiSectionSheetData {
+  milestones?: RoadmapMilestone[];
   expenses?: ExpenseRecord[];
   investments?: InvestmentItem[];
   loans?: LoanItem[];
@@ -59,6 +62,7 @@ export interface MultiSectionSheetData {
   notes?: NoteItem[];
   tasks?: ChecklistTask[];
   journalEntries?: JournalEntry[];
+  notifications?: AppNotification[];
 }
 
 const MONTH_SHORT_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -116,6 +120,14 @@ export const exportMultiSectionToGoogleSheets = async (
     data.journalEntries !== undefined
       ? data.journalEntries
       : getStoredData<JournalEntry[]>(STORAGE_KEYS.JOURNAL, defaultJournalEntries);
+  const milestonesList =
+    data.milestones !== undefined
+      ? data.milestones
+      : getStoredData<RoadmapMilestone[]>(STORAGE_KEYS.MILESTONES, []);
+  const notificationsList =
+    data.notifications !== undefined
+      ? data.notifications
+      : getStoredData<AppNotification[]>(STORAGE_KEYS.NOTIFICATIONS, []);
 
   // Group expenses by month (YYYY-MM) so we can also create/update dedicated monthly pages inside the same sheet
   const expensesByMonth: Record<string, ExpenseRecord[]> = {};
@@ -139,6 +151,7 @@ export const exportMultiSectionToGoogleSheets = async (
     'Keep To-Dos & Notes',
     'Calendar & Events',
     'Personal Diary',
+    '🔄 App Sync State',
   ];
 
   const sectionPages = [...coreSectionPages, ...monthlyExpensePageTitles];
@@ -471,6 +484,7 @@ export const exportMultiSectionToGoogleSheets = async (
     'Amount (₹)',
     'Payment Mode',
     'Description',
+    'Record ID',
   ];
   const expenseRows: any[][] = [];
   if (expensesList.length > 0) {
@@ -484,6 +498,7 @@ export const exportMultiSectionToGoogleSheets = async (
         item.amount,
         item.paymentMode.toUpperCase(),
         item.description,
+        item.id,
       ]);
     });
   } else {
@@ -495,6 +510,7 @@ export const exportMultiSectionToGoogleSheets = async (
       0,
       '—',
       '[No active expenses recorded. All cleared / Add new on website.]',
+      '—',
     ]);
   }
   writeDataPayload.push({
@@ -570,6 +586,7 @@ export const exportMultiSectionToGoogleSheets = async (
     'Invest Date',
     'Last Add Date',
     'Notes',
+    'Asset ID',
   ];
   const invRows: any[][] = [];
   if (investmentsList.length > 0) {
@@ -587,6 +604,7 @@ export const exportMultiSectionToGoogleSheets = async (
         inv.investDate || inv.startDate || '—',
         inv.lastAddDate || '—',
         inv.notes || '',
+        inv.id,
       ]);
     });
   } else {
@@ -602,6 +620,7 @@ export const exportMultiSectionToGoogleSheets = async (
       '—',
       '—',
       '[No active investments recorded. All cleared / Add new on website.]',
+      '—',
     ]);
   }
   writeDataPayload.push({
@@ -623,6 +642,7 @@ export const exportMultiSectionToGoogleSheets = async (
     'Status',
     'Last Paid Date',
     'Notes',
+    'Loan ID',
   ];
   const loanRows: any[][] = [];
   if (loansList.length > 0) {
@@ -640,6 +660,7 @@ export const exportMultiSectionToGoogleSheets = async (
         loan.status.toUpperCase(),
         loan.lastPaidDate || '—',
         loan.notes || '',
+        loan.id,
       ]);
     });
   } else {
@@ -655,6 +676,7 @@ export const exportMultiSectionToGoogleSheets = async (
       'ACTIVE',
       '—',
       '[No active loans. Enter loan data manually on website.]',
+      '—',
     ]);
   }
   writeDataPayload.push({
@@ -916,6 +938,45 @@ export const exportMultiSectionToGoogleSheets = async (
     values: [diaryHeaders, ...diaryRows],
   });
 
+  // 10. PAGE: 🔄 App Sync State (Lossless Two-Way Sync State for App ↔ Sheet)
+  const chunkString = (str: string, size = 35000): string[] => {
+    const chunks: string[] = [];
+    for (let i = 0; i < str.length; i += size) {
+      chunks.push(str.slice(i, i + size));
+    }
+    return chunks.length > 0 ? chunks : ['[]'];
+  };
+
+  const syncIso = new Date().toISOString();
+  const stateSections: [string, any][] = [
+    ['milestones', milestonesList],
+    ['loans', loansList],
+    ['investments', investmentsList],
+    ['expenses', expensesList],
+    ['habits', habitsList],
+    ['dinacharyaLogs', dinacharyaList],
+    ['tasks', tasksList],
+    ['notes', notesList],
+    ['events', eventsList],
+    ['journalEntries', journalList],
+    ['notifications', notificationsList],
+  ];
+
+  const syncStateRows: any[][] = [
+    ['SECTION_KEY', 'LAST_UPDATED_ISO', 'JSON_CHUNK_1', 'JSON_CHUNK_2', 'JSON_CHUNK_3'],
+    ...stateSections.map(([key, val]) => {
+      const serialized = JSON.stringify(val ?? []);
+      const chunks = chunkString(serialized, 35000);
+      return [key, syncIso, ...chunks];
+    }),
+  ];
+
+  writeDataPayload.push({
+    range: "'🔄 App Sync State'!A1",
+    majorDimension: 'ROWS',
+    values: syncStateRows,
+  });
+
   // ================= STEP 3: ATOMIC BATCH WRITE TO ALL SHEETS =================
   const updateResp = await fetch(
     `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values:batchUpdate`,
@@ -1075,16 +1136,381 @@ export const exportMultiSectionToGoogleSheets = async (
 
   const syncFinishDate = new Date();
   const currentYm = syncFinishDate.toISOString().slice(0, 7);
-  if (syncFinishDate.getDate() >= 5) {
-    try {
+  const sheetUrl = `https://docs.google.com/spreadsheets/d/${spreadsheetId}/edit`;
+  try {
+    const timeStr = syncFinishDate.toLocaleTimeString([], {
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+    });
+    localStorage.setItem('ayurlife_sheet_last_synced', timeStr);
+    window.dispatchEvent(
+      new CustomEvent('ayurlife_sheet_synced', {
+        detail: { time: timeStr, spreadsheetUrl: sheetUrl },
+      })
+    );
+    if (syncFinishDate.getDate() >= 5) {
       localStorage.setItem(STORAGE_KEYS.MONTHLY_5TH_SHEET_SYNC, currentYm);
       writeToIDB(STORAGE_KEYS.MONTHLY_5TH_SHEET_SYNC, currentYm);
-    } catch {}
-  }
+    }
+  } catch {}
 
   return {
     spreadsheetId,
-    spreadsheetUrl: `https://docs.google.com/spreadsheets/d/${spreadsheetId}/edit`,
+    spreadsheetUrl: sheetUrl,
+  };
+};
+
+/**
+ * TWO-WAY SYNC (Google Sheet -> App):
+ * Finds the user's Master Google Sheet in Google Drive (or via saved MASTER_SHEET_KEY),
+ * reads both '🔄 App Sync State' and the visible user-editable tabs ('Daily Expenses', 'Loans & EMIs', 'Investments'),
+ * and returns the merged data to populate the app immediately on Gmail login or manual sync.
+ */
+export const fetchFromMasterGoogleSheet = async (): Promise<{
+  found: boolean;
+  spreadsheetId?: string;
+  spreadsheetUrl?: string;
+  data?: MultiSectionSheetData;
+}> => {
+  const token = await getAccessToken();
+  if (!token) return { found: false };
+
+  let spreadsheetId = localStorage.getItem(MASTER_SHEET_KEY);
+  if (!spreadsheetId) {
+    spreadsheetId = await readFromIDB(MASTER_SHEET_KEY);
+    if (spreadsheetId) {
+      localStorage.setItem(MASTER_SHEET_KEY, spreadsheetId);
+    }
+  }
+
+  let existingTitles: string[] = [];
+
+  if (spreadsheetId) {
+    try {
+      const checkResp = await fetch(
+        `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}?includeGridData=false`,
+        {
+          headers: { Authorization: `Bearer ${token}` },
+        }
+      );
+      if (checkResp.ok) {
+        const info = await checkResp.json();
+        existingTitles = (info.sheets || []).map((s: any) => s.properties?.title || '');
+      } else if (checkResp.status === 404) {
+        spreadsheetId = null;
+      } else {
+        return { found: false };
+      }
+    } catch {
+      return { found: false };
+    }
+  }
+
+  // Search Google Drive for existing Master Sheet if not in local storage
+  if (!spreadsheetId) {
+    try {
+      const query = encodeURIComponent(
+        "mimeType = 'application/vnd.google-apps.spreadsheet' and (name contains 'LifeOS' or name contains 'Dr. Ravi Shankar') and trashed = false"
+      );
+      const searchResp = await fetch(
+        `https://www.googleapis.com/drive/v3/files?q=${query}&orderBy=modifiedTime desc&fields=files(id,name)`,
+        {
+          headers: { Authorization: `Bearer ${token}` },
+        }
+      );
+      if (searchResp.ok) {
+        const searchData = await searchResp.json();
+        const foundFile = (searchData.files || [])[0];
+        if (foundFile && foundFile.id) {
+          spreadsheetId = foundFile.id;
+          localStorage.setItem(MASTER_SHEET_KEY, foundFile.id);
+          writeToIDB(MASTER_SHEET_KEY, foundFile.id);
+
+          const metaResp = await fetch(
+            `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}?includeGridData=false`,
+            {
+              headers: { Authorization: `Bearer ${token}` },
+            }
+          );
+          if (metaResp.ok) {
+            const info = await metaResp.json();
+            existingTitles = (info.sheets || []).map((s: any) => s.properties?.title || '');
+          }
+        }
+      }
+    } catch {
+      return { found: false };
+    }
+  }
+
+  if (!spreadsheetId || existingTitles.length === 0) {
+    return { found: false };
+  }
+
+  const rangesToFetch: string[] = [];
+  if (existingTitles.includes('🔄 App Sync State')) {
+    rangesToFetch.push("'🔄 App Sync State'!A2:Z20");
+  }
+  if (existingTitles.includes('Daily Expenses')) {
+    rangesToFetch.push("'Daily Expenses'!A2:H2000");
+  }
+  if (existingTitles.includes('Loans & EMIs')) {
+    rangesToFetch.push("'Loans & EMIs'!A2:L500");
+  }
+  if (existingTitles.includes('Investments')) {
+    rangesToFetch.push("'Investments'!A2:L500");
+  }
+
+  if (rangesToFetch.length === 0) {
+    return {
+      found: true,
+      spreadsheetId,
+      spreadsheetUrl: `https://docs.google.com/spreadsheets/d/${spreadsheetId}/edit`,
+    };
+  }
+
+  const queryParams = rangesToFetch
+    .map((r) => `ranges=${encodeURIComponent(r)}`)
+    .join('&');
+  const batchGetResp = await fetch(
+    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values:batchGet?${queryParams}&valueRenderOption=UNFORMATTED_VALUE`,
+    {
+      headers: { Authorization: `Bearer ${token}` },
+    }
+  );
+
+  if (!batchGetResp.ok) {
+    return { found: false };
+  }
+
+  const batchData = await batchGetResp.json();
+  const valueRanges: { range: string; values?: any[][] }[] = batchData.valueRanges || [];
+
+  const parsedData: MultiSectionSheetData = {};
+
+  // 1. Parse lossless JSON state from '🔄 App Sync State' if available
+  const syncStateRange = valueRanges.find((vr) => vr.range?.includes('App Sync State'));
+  if (syncStateRange && syncStateRange.values) {
+    syncStateRange.values.forEach((row) => {
+      const sectionKey = String(row[0] || '').trim();
+      const jsonChunks = row.slice(2).map((c) => String(c || '')).join('');
+      if (sectionKey && jsonChunks) {
+        try {
+          (parsedData as any)[sectionKey] = JSON.parse(jsonChunks);
+        } catch {}
+      }
+    });
+  }
+
+  // 2. Parse visible 'Daily Expenses' tab so any direct edits/additions/deletions in Google Sheets are reflected
+  const expensesRange = valueRanges.find((vr) => vr.range?.includes('Daily Expenses'));
+  if (expensesRange && expensesRange.values && expensesRange.values.length > 0) {
+    const rawRows = expensesRange.values;
+    const firstRowDate = String(rawRows[0]?.[0] || '').trim();
+    if (firstRowDate === '—') {
+      parsedData.expenses = [];
+    } else {
+      const validCategories = [
+        'food_dining',
+        'study_books',
+        'travel_commute',
+        'living_personal',
+        'clinic_consultation',
+        'loan_emi',
+        'investment',
+        'other',
+      ];
+      const validModes = ['upi', 'cash', 'card', 'bank_transfer'];
+      const sheetExpenses: ExpenseRecord[] = [];
+
+      rawRows.forEach((row, idx) => {
+        const dStr = String(row[0] || '').trim();
+        if (!dStr || dStr === '—') return;
+
+        // Detect 7/8-col format (Date, Month, Type, Category, Amount, Mode, Desc, ID) vs 6-col format (Date, Type, Category, Amount, Mode, Desc)
+        const hasMonthCol = /^\d{4}-\d{2}$/.test(String(row[1] || '').trim());
+        const rawType = String(hasMonthCol ? row[2] : row[1] || 'EXPENSE').trim().toLowerCase();
+        const rawCat = String(hasMonthCol ? row[3] : row[2] || 'other')
+          .trim()
+          .toLowerCase()
+          .replace(/\s+/g, '_');
+        const rawAmt = Number(String(hasMonthCol ? row[4] : row[3] || 0).replace(/[^0-9.-]/g, '')) || 0;
+        const rawMode = String(hasMonthCol ? row[5] : row[4] || 'upi')
+          .trim()
+          .toLowerCase()
+          .replace(/\s+/g, '_');
+        const rawDesc = String(hasMonthCol ? row[6] : row[5] || '').trim();
+        const rawId = hasMonthCol && row[7] ? String(row[7]).trim() : '';
+
+        if (rawAmt <= 0 && !rawDesc) return;
+
+        const category = (validCategories.includes(rawCat) ? rawCat : 'other') as ExpenseRecord['category'];
+        const paymentMode = (validModes.includes(rawMode) ? rawMode : 'upi') as ExpenseRecord['paymentMode'];
+        const type: 'income' | 'expense' = rawType.includes('income') ? 'income' : 'expense';
+
+        const existingMatch = (parsedData.expenses || []).find(
+          (e) =>
+            (rawId && e.id === rawId) ||
+            (e.date === dStr && e.amount === rawAmt && e.description === rawDesc)
+        );
+
+        sheetExpenses.push({
+          id: existingMatch?.id || rawId || `exp-sheet-${dStr}-${idx}`,
+          date: dStr,
+          type,
+          category,
+          amount: rawAmt,
+          paymentMode,
+          description: rawDesc || 'Expense entry',
+        });
+      });
+
+      parsedData.expenses = sheetExpenses;
+    }
+  }
+
+  // 3. Parse visible 'Loans & EMIs' tab and merge with paymentHistory from sync state
+  const loansRange = valueRanges.find((vr) => vr.range?.includes('Loans & EMIs'));
+  if (loansRange && loansRange.values && loansRange.values.length > 0) {
+    const rawRows = loansRange.values;
+    const firstTitle = String(rawRows[0]?.[0] || '').trim();
+    if (firstTitle === '—') {
+      parsedData.loans = [];
+    } else {
+      const sheetLoans: LoanItem[] = [];
+      rawRows.forEach((row, idx) => {
+        const title = String(row[0] || '').trim();
+        if (!title || title === '—') return;
+        const lender = String(row[1] || 'Lender').trim();
+        const principalAmount = Number(String(row[2] || 0).replace(/[^0-9.-]/g, '')) || 0;
+        const rawEmiNum = Number(String(row[3] ?? '').replace(/[^0-9.-]/g, ''));
+        const monthlyEmi =
+          String(row[3] ?? '').trim() !== '' && !Number.isNaN(rawEmiNum) ? rawEmiNum : 0;
+        const totalPaid = Number(String(row[4] || 0).replace(/[^0-9.-]/g, '')) || 0;
+        const rawRateNum = Number(String(row[6] ?? '').replace(/[^0-9.-]/g, ''));
+        const interestRate =
+          String(row[6] ?? '').trim() !== '' && !Number.isNaN(rawRateNum) ? rawRateNum : 0;
+        const rawTenureNum = Number(String(row[7] ?? '').replace(/[^0-9.-]/g, ''));
+        const tenureMonths =
+          String(row[7] ?? '').trim() !== '' && !Number.isNaN(rawTenureNum) ? rawTenureNum : 0;
+        const rawStatus = String(row[8] || 'ACTIVE').trim().toLowerCase();
+        const lastPaidDate = String(row[9] || '').trim();
+        const notes = String(row[10] || '').trim();
+        const loanId = row[11] ? String(row[11]).trim() : '';
+
+        const existingLoan = (parsedData.loans || []).find(
+          (l) =>
+            (loanId && l.id === loanId) ||
+            (l.title.toLowerCase() === title.toLowerCase() &&
+              l.lender.toLowerCase() === lender.toLowerCase())
+        );
+
+        const status: LoanItem['status'] =
+          rawStatus === 'paid' || rawStatus === 'closed'
+            ? 'closed'
+            : rawStatus === 'partially_paid'
+            ? 'partially_paid'
+            : 'active';
+
+        sheetLoans.push({
+          id: existingLoan?.id || loanId || `loan-sheet-${idx}`,
+          title,
+          lender,
+          principalAmount,
+          interestRate,
+          tenureMonths,
+          monthlyEmi,
+          totalPaid,
+          status,
+          startDate: existingLoan?.startDate || (lastPaidDate !== '—' ? lastPaidDate : '2026-10-05'),
+          borrowDate: existingLoan?.borrowDate || existingLoan?.startDate || '2026-10-05',
+          lastPaidDate: lastPaidDate !== '—' ? lastPaidDate : existingLoan?.lastPaidDate || '2026-10-05',
+          dueDateDay: existingLoan?.dueDateDay || 10,
+          notes: notes || existingLoan?.notes,
+          paymentHistory: existingLoan?.paymentHistory || [],
+        });
+      });
+      parsedData.loans = sheetLoans;
+    }
+  }
+
+  // 4. Parse visible 'Investments' tab and merge with transactionHistory from sync state
+  const invRange = valueRanges.find((vr) => vr.range?.includes('Investments'));
+  if (invRange && invRange.values && invRange.values.length > 0) {
+    const rawRows = invRange.values;
+    const firstTitle = String(rawRows[0]?.[0] || '').trim();
+    if (firstTitle === '—') {
+      parsedData.investments = [];
+    } else {
+      const sheetInvestments: InvestmentItem[] = [];
+      rawRows.forEach((row, idx) => {
+        const title = String(row[0] || '').trim();
+        if (!title || title === '—') return;
+        const platform = String(row[1] || 'Groww').trim();
+        const rawCat = String(row[2] || 'mutual_fund')
+          .trim()
+          .toLowerCase()
+          .replace(/\s+/g, '_');
+        const investedAmount = Number(String(row[3] || 0).replace(/[^0-9.-]/g, '')) || 0;
+        const currentValue = Number(String(row[4] || 0).replace(/[^0-9.-]/g, '')) || 0;
+        const expectedReturnRate = Number(String(row[6] || 12).replace(/[^0-9.-]/g, '')) || 12;
+        const sipMonthly = Number(String(row[7] || 0).replace(/[^0-9.-]/g, '')) || 0;
+        const investDate = String(row[8] || '').trim();
+        const lastAddDate = String(row[9] || '').trim();
+        const notes = String(row[10] || '').trim();
+        const invId = row[11] ? String(row[11]).trim() : '';
+
+        const existingInv = (parsedData.investments || []).find(
+          (i) =>
+            (invId && i.id === invId) ||
+            (i.title.toLowerCase() === title.toLowerCase() &&
+              i.platform.toLowerCase() === platform.toLowerCase())
+        );
+
+        const validInvCats = ['mutual_fund', 'stocks', 'gold', 'fd', 'clinic_fund', 'other'];
+        const category = (validInvCats.includes(rawCat) ? rawCat : 'mutual_fund') as InvestmentItem['category'];
+
+        sheetInvestments.push({
+          id: existingInv?.id || invId || `inv-sheet-${idx}`,
+          title,
+          platform,
+          category,
+          investedAmount,
+          currentValue,
+          expectedReturnRate,
+          sipMonthly,
+          startDate: investDate !== '—' ? investDate : existingInv?.startDate || '2026-10-05',
+          investDate: investDate !== '—' ? investDate : existingInv?.investDate || '2026-10-05',
+          lastAddDate: lastAddDate !== '—' ? lastAddDate : existingInv?.lastAddDate,
+          notes: notes || existingInv?.notes,
+          transactionHistory: existingInv?.transactionHistory || [],
+        });
+      });
+      parsedData.investments = sheetInvestments;
+    }
+  }
+
+  const sheetUrl = `https://docs.google.com/spreadsheets/d/${spreadsheetId}/edit`;
+  try {
+    const timeStr = new Date().toLocaleTimeString([], {
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+    });
+    localStorage.setItem('ayurlife_sheet_last_synced', timeStr);
+    window.dispatchEvent(
+      new CustomEvent('ayurlife_sheet_synced', {
+        detail: { time: timeStr, spreadsheetUrl: sheetUrl },
+      })
+    );
+  } catch {}
+
+  return {
+    found: true,
+    spreadsheetId,
+    spreadsheetUrl: sheetUrl,
+    data: parsedData,
   };
 };
 

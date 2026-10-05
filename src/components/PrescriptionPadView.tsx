@@ -137,6 +137,15 @@ export const PrescriptionPadView: React.FC<PrescriptionPadViewProps> = ({
       .trim();
   };
 
+  // Clean diagnosis text helper (removes any "Samprapti Evaluation for <Age> <Gender>" suffix)
+  const cleanDiagnosisText = (
+    result.ayurvedicAnalysis.vyadhiVinischaya ||
+    diseaseInput ||
+    'Clinical Evaluation'
+  )
+    .replace(/\s*[-–—•]?\s*Samprapti Evaluation for[^[\n]*/gi, '')
+    .trim();
+
   /**
    * Pure HTML5 2D Canvas renderer that draws the complete official
    * Ayurveez Healthcare Prescription Pad at high resolution (2x A4)
@@ -269,9 +278,10 @@ export const PrescriptionPadView: React.FC<PrescriptionPadViewProps> = ({
     ctx.fillStyle = '#065f46';
     ctx.font = '700 9.5px sans-serif';
     ctx.fillText('PATIENT DETAILS', pad + 14, y + 15);
-    ctx.fillText('PRAKRITI & AGNI / KOSTHA', pad + 260, y + 15);
+    ctx.fillText('PRAKRITI', pad + 250, y + 15);
+    ctx.fillText('AGNI & KOSTHA', pad + 410, y + 15);
     ctx.textAlign = 'right';
-    ctx.fillText('DATE OF CONSULTATION', width - pad - 14, y + 15);
+    ctx.fillText('DATE', width - pad - 14, y + 15);
     ctx.textAlign = 'left';
 
     ctx.fillStyle = '#0f172a';
@@ -282,11 +292,10 @@ export const PrescriptionPadView: React.FC<PrescriptionPadViewProps> = ({
       pad + 14,
       y + 32
     );
+    ctx.fillText(`${patientPrakriti || 'Vata-Pitta'}`, pad + 250, y + 32);
     ctx.fillText(
-      `${patientPrakriti || 'Vata-Pitta'} • ${patientAgni || 'Vishamagni'} • ${
-        patientKostha || 'Krura Kostha'
-      }`,
-      pad + 260,
+      `${patientAgni || 'Vishamagni'} • ${patientKostha || 'Krura Kostha'}`,
+      pad + 410,
       y + 32
     );
     ctx.textAlign = 'right';
@@ -303,30 +312,36 @@ export const PrescriptionPadView: React.FC<PrescriptionPadViewProps> = ({
       ctx.fillText(extraParts.join('   |   '), pad + 14, y + 50);
     }
 
-    y += vitalsBoxHeight + 18;
+    y += vitalsBoxHeight + 16;
 
-    // Clinical Diagnosis
+    // Clinical Diagnosis Box (High visibility)
+    const diagnosisText = cleanDiagnosisText;
+    ctx.fillStyle = '#f0fdf4';
+    ctx.strokeStyle = '#059669';
+    ctx.lineWidth = 1.5;
+    ctx.fillRect(pad, y, contentWidth, 44);
+    ctx.strokeRect(pad, y, contentWidth, 44);
+
     ctx.fillStyle = '#065f46';
-    ctx.font = '800 11px sans-serif';
-    ctx.fillText('CLINICAL DIAGNOSIS:', pad, y);
+    ctx.font = '900 12px sans-serif';
+    ctx.fillText('DIAGNOSIS :', pad + 14, y + 18);
     ctx.fillStyle = '#0f172a';
-    ctx.font = '800 13.5px sans-serif';
-    ctx.fillText(result.ayurvedicAnalysis.vyadhiVinischaya, pad + 132, y);
+    ctx.font = '900 14px sans-serif';
+    ctx.fillText(diagnosisText, pad + 105, y + 18);
 
     if (activeShloka) {
-      y += 15;
-      ctx.fillStyle = '#64748b';
+      ctx.fillStyle = '#475569';
       ctx.font = 'italic 10.5px sans-serif';
       ctx.fillText(
         `Classical Reference: ${activeShloka.sourceBook} (${activeShloka.chapterAndVerse})${
           acharyaProto ? ` • ${acharyaProto.acharyaName}` : ''
         }`,
-        pad,
-        y
+        pad + 14,
+        y + 35
       );
     }
 
-    y += 26;
+    y += 62;
     ctx.fillStyle = '#065f46';
     ctx.font = '900 26px serif';
     ctx.fillText('℞', pad, y);
@@ -938,9 +953,10 @@ export const PrescriptionPadView: React.FC<PrescriptionPadViewProps> = ({
             </div>
 
             {/* PATIENT DEMOGRAPHICS & CLINICAL VITALS BAR */}
-            <div className="my-2.5 sm:my-3.5 py-2 px-3 rounded-xl bg-emerald-50/80 border border-emerald-200/80 font-sans text-[10px] sm:text-xs flex items-center justify-between flex-wrap gap-2">
-              <div className="flex items-center gap-3 sm:gap-4 flex-wrap">
-                <div>
+            <div className="my-2.5 sm:my-3.5 py-2.5 px-3.5 rounded-xl bg-emerald-50/90 border border-emerald-300 font-sans text-[10px] sm:text-xs space-y-1.5">
+              {/* Primary Row: Patient Details | Prakriti | Agni & Kostha | Date (on right side of Agni & Kostha) */}
+              <div className="flex items-center justify-between gap-2 sm:gap-4 w-full">
+                <div className="min-w-0">
                   <span className="text-[9px] uppercase font-bold text-emerald-800 block">
                     Patient Details
                   </span>
@@ -950,34 +966,10 @@ export const PrescriptionPadView: React.FC<PrescriptionPadViewProps> = ({
                     {patientGender || 'Unspecified'}
                   </span>
                 </div>
-                {patientContact.trim() && (
-                  <>
-                    <div className="h-5 w-px bg-emerald-200" />
-                    <div>
-                      <span className="text-[9px] uppercase font-bold text-emerald-800 block">
-                        Contact
-                      </span>
-                      <span className="font-extrabold text-slate-900">
-                        {patientContact.trim()}
-                      </span>
-                    </div>
-                  </>
-                )}
-                {patientAddress.trim() && (
-                  <>
-                    <div className="h-5 w-px bg-emerald-200" />
-                    <div>
-                      <span className="text-[9px] uppercase font-bold text-emerald-800 block">
-                        Address
-                      </span>
-                      <span className="font-semibold text-slate-800">
-                        {patientAddress.trim()}
-                      </span>
-                    </div>
-                  </>
-                )}
-                <div className="h-5 w-px bg-emerald-200" />
-                <div>
+
+                <div className="h-6 w-px bg-emerald-300/80 shrink-0" />
+
+                <div className="shrink-0">
                   <span className="text-[9px] uppercase font-bold text-emerald-800 block">
                     Prakriti
                   </span>
@@ -985,37 +977,78 @@ export const PrescriptionPadView: React.FC<PrescriptionPadViewProps> = ({
                     {patientPrakriti || 'Vata-Pitta'}
                   </span>
                 </div>
-                <div className="h-5 w-px bg-emerald-200" />
-                <div>
-                  <span className="text-[9px] uppercase font-bold text-emerald-800 block">
-                    Agni &amp; Kostha
-                  </span>
-                  <span className="font-semibold text-slate-800">
-                    {patientAgni || 'Vishamagni'} • {patientKostha || 'Krura Kostha'}
-                  </span>
+
+                <div className="h-6 w-px bg-emerald-300/80 shrink-0" />
+
+                {/* Agni & Kostha and Date side-by-side with Date on the right side of Agni & Kostha */}
+                <div className="flex items-center gap-3 sm:gap-5 shrink-0">
+                  <div>
+                    <span className="text-[9px] uppercase font-bold text-emerald-800 block">
+                      Agni &amp; Kostha
+                    </span>
+                    <span className="font-bold text-slate-900">
+                      {patientAgni || 'Vishamagni'} • {patientKostha || 'Krura Kostha'}
+                    </span>
+                  </div>
+
+                  <div className="h-6 w-px bg-emerald-300/80 shrink-0" />
+
+                  <div className="text-right shrink-0">
+                    <span className="text-[9px] uppercase font-bold text-emerald-800 block">
+                      Date
+                    </span>
+                    <span className="font-extrabold text-slate-900 whitespace-nowrap">
+                      {currentDate}
+                    </span>
+                  </div>
                 </div>
               </div>
 
-              <div className="text-right">
-                <span className="text-[9px] uppercase font-bold text-emerald-800 block">
-                  Date
-                </span>
-                <span className="font-extrabold text-slate-900">{currentDate}</span>
-              </div>
+              {/* Optional Contact & Address Sub-Row */}
+              {(patientContact.trim() || patientAddress.trim()) && (
+                <div className="pt-1.5 border-t border-emerald-200/80 flex items-center gap-4 flex-wrap text-[10px] sm:text-[11px]">
+                  {patientContact.trim() && (
+                    <div>
+                      <span className="text-[9px] uppercase font-bold text-emerald-800 mr-1.5">
+                        Contact:
+                      </span>
+                      <span className="font-extrabold text-slate-900">
+                        {patientContact.trim()}
+                      </span>
+                    </div>
+                  )}
+                  {patientAddress.trim() && (
+                    <div>
+                      <span className="text-[9px] uppercase font-bold text-emerald-800 mr-1.5">
+                        Address:
+                      </span>
+                      <span className="font-semibold text-slate-800">
+                        {patientAddress.trim()}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
 
-            {/* CLINICAL DIAGNOSIS LINE */}
-            <div className="mb-3 pb-2 border-b border-slate-200 font-sans flex items-center justify-between flex-wrap gap-2">
-              <div className="flex items-center gap-2 text-xs">
-                <span className="px-2 py-0.5 rounded-md bg-emerald-800 text-white font-black text-[9.5px] tracking-wider uppercase">
-                  Diagnosis
+            {/* CLINICAL DIAGNOSIS BOX (HIGH-CONTRAST & CLEARLY VISIBLE) */}
+            <div className="mb-3.5 py-2.5 px-3.5 rounded-xl bg-amber-50/70 border-2 border-emerald-600/40 font-sans flex flex-col sm:flex-row sm:items-center justify-between gap-1.5">
+              <div className="flex items-baseline gap-2 flex-wrap">
+                <span
+                  className="text-[11px] sm:text-xs font-black tracking-wider uppercase text-emerald-900 shrink-0"
+                  style={{ color: '#064e3b' }}
+                >
+                  DIAGNOSIS :
                 </span>
-                <h3 className="font-black text-xs sm:text-sm text-slate-900">
-                  {result.ayurvedicAnalysis.vyadhiVinischaya}
+                <h3
+                  className="font-black text-sm sm:text-base text-slate-950 leading-snug"
+                  style={{ color: '#0f172a' }}
+                >
+                  {cleanDiagnosisText}
                 </h3>
               </div>
               {acharyaProto ? (
-                <p className="text-[9.5px] sm:text-[10.5px] text-slate-500 italic">
+                <p className="text-[9.5px] sm:text-[10.5px] text-slate-600 font-medium italic">
                   {acharyaProto.acharyaName} • Disease Ref:{' '}
                   {acharyaProto.isDirectlyMentioned === false || acharyaProto.shlokaReference?.shlokaSanskrit === 'NA'
                     ? 'NA'
@@ -1027,7 +1060,7 @@ export const PrescriptionPadView: React.FC<PrescriptionPadViewProps> = ({
                 </p>
               ) : (
                 activeShloka && (
-                  <p className="text-[9.5px] sm:text-[10.5px] text-slate-500 italic">
+                  <p className="text-[9.5px] sm:text-[10.5px] text-slate-600 font-medium italic">
                     Ref: {activeShloka.sourceBook} ({activeShloka.chapterAndVerse})
                   </p>
                 )

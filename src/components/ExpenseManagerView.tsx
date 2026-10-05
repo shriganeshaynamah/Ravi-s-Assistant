@@ -60,6 +60,7 @@ interface ExpenseManagerViewProps {
   onDeleteInvestment: (id: string) => void;
   user: User | null;
   onRequireAuth: () => void;
+  onFetchFromSheet?: () => Promise<boolean>;
   isDark: boolean;
   initialTab?: 'expenses' | 'loans' | 'investments';
 }
@@ -78,6 +79,7 @@ export const ExpenseManagerView: React.FC<ExpenseManagerViewProps> = ({
   onDeleteInvestment,
   user,
   onRequireAuth,
+  onFetchFromSheet,
   isDark,
   initialTab,
 }) => {
@@ -517,6 +519,26 @@ export const ExpenseManagerView: React.FC<ExpenseManagerViewProps> = ({
 
   const [isClearAllExpensesOpen, setIsClearAllExpensesOpen] = useState(false);
   const [isClearAllInvestmentsOpen, setIsClearAllInvestmentsOpen] = useState(false);
+  const [isFetchingSheet, setIsFetchingSheet] = useState(false);
+
+  const handleFetchFromSheets = async () => {
+    if (!user) {
+      onRequireAuth();
+      return;
+    }
+    if (!onFetchFromSheet) return;
+    setIsFetchingSheet(true);
+    try {
+      await onFetchFromSheet();
+      const url = getMasterSpreadsheetUrl();
+      if (url) setExportedSheetUrl(url);
+      setMonthly5thStatus(getMonthly5thAutoSyncStatus());
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setIsFetchingSheet(false);
+    }
+  };
 
   const handleExportSheets = async () => {
     if (!user) {
@@ -588,19 +610,52 @@ export const ExpenseManagerView: React.FC<ExpenseManagerViewProps> = ({
     setFormDesc('');
   };
 
+  // Helper to auto-fetch latest repayment date from loan paymentHistory
+  const getLatestRepaymentDate = (history?: LoanPaymentRecord[]): string | null => {
+    if (!history || history.length === 0) return null;
+    const validDates = history
+      .map((p) => (p.date || '').trim())
+      .filter(Boolean)
+      .sort((a, b) => b.localeCompare(a));
+    return validDates[0] || null;
+  };
+
+  // Effective Last Payment Date for display (auto-fetched from repayment history)
+  const getEffectiveLastPaidDate = (loan: LoanItem): string => {
+    const fromHistory = getLatestRepaymentDate(loan.paymentHistory);
+    if (fromHistory) return fromHistory;
+    if (loan.totalPaid > 0 && loan.lastPaidDate) return loan.lastPaidDate;
+    return 'No payment yet';
+  };
+
   const openLoanModal = (loan?: LoanItem) => {
     if (loan) {
       setEditingLoan(loan);
       setLoanTitle(loan.title);
       setLoanLender(loan.lender);
       setLoanPrincipal(loan.principalAmount.toString());
-      setLoanRate(loan.interestRate.toString());
-      setLoanTenure(loan.tenureMonths.toString());
-      setLoanEmi(loan.monthlyEmi ? loan.monthlyEmi.toString() : '');
+      setLoanRate(
+        loan.interestRate !== undefined && loan.interestRate !== null
+          ? loan.interestRate.toString()
+          : '0'
+      );
+      setLoanTenure(
+        loan.tenureMonths !== undefined && loan.tenureMonths !== null
+          ? loan.tenureMonths.toString()
+          : '0'
+      );
+      setLoanEmi(
+        loan.monthlyEmi !== undefined && loan.monthlyEmi !== null
+          ? loan.monthlyEmi.toString()
+          : ''
+      );
       setLoanTotalPaid(loan.totalPaid.toString());
       setLoanStatus(loan.status);
       setLoanBorrowDate(loan.borrowDate || loan.startDate || todayStr);
-      setLoanLastPaidDate(loan.lastPaidDate || todayStr);
+      const autoLastPaid =
+        getLatestRepaymentDate(loan.paymentHistory) ||
+        (loan.totalPaid > 0 ? loan.lastPaidDate || '' : '');
+      setLoanLastPaidDate(autoLastPaid);
     } else {
       setEditingLoan(null);
       setLoanTitle('');
@@ -612,20 +667,33 @@ export const ExpenseManagerView: React.FC<ExpenseManagerViewProps> = ({
       setLoanTotalPaid('0');
       setLoanStatus('active');
       setLoanBorrowDate(todayStr);
-      setLoanLastPaidDate(todayStr);
+      setLoanLastPaidDate('');
     }
     setIsAddLoanOpen(true);
   };
 
   const handleSaveLoan = (e: React.FormEvent) => {
     e.preventDefault();
-    const p = parseFloat(loanPrincipal);
-    const r = parseFloat(loanRate) || 8.5;
-    const t = parseInt(loanTenure, 10) || 36;
+    const p = parseFloat(loanPrincipal) || 0;
+    const parsedRate = loanRate.trim() !== '' ? parseFloat(loanRate) : NaN;
+    const r = !Number.isNaN(parsedRate) ? parsedRate : 0;
+    const parsedTenure = loanTenure.trim() !== '' ? parseInt(loanTenure, 10) : NaN;
+    const t = !Number.isNaN(parsedTenure) ? parsedTenure : 0;
     const autoCalcEmi = calculateEmi(p, r, t).emi;
     const totalPaidNum = parseFloat(loanTotalPaid) || 0;
 
+    // If user manually enters 0 (or any number), strictly use that value and do NOT auto-calculate
+    const parsedManualEmi = loanEmi.trim() !== '' ? parseFloat(loanEmi) : NaN;
+    const finalMonthlyEmi = !Number.isNaN(parsedManualEmi)
+      ? Math.max(0, parsedManualEmi)
+      : autoCalcEmi;
+
     const autoStatus = totalPaidNum >= p && p > 0 ? 'full_paid' : totalPaidNum > 0 ? 'partially_paid' : 'active';
+    const existingHistory = editingLoan?.paymentHistory || [];
+    const autoFetchedLastPaidDate =
+      getLatestRepaymentDate(existingHistory) ||
+      loanLastPaidDate.trim() ||
+      (totalPaidNum > 0 ? todayStr : '');
 
     const loanObj: LoanItem = {
       id: editingLoan ? editingLoan.id : `loan-${Date.now()}`,
@@ -634,14 +702,14 @@ export const ExpenseManagerView: React.FC<ExpenseManagerViewProps> = ({
       principalAmount: p,
       interestRate: r,
       tenureMonths: t,
-      monthlyEmi: loanEmi ? parseFloat(loanEmi) : autoCalcEmi,
+      monthlyEmi: finalMonthlyEmi,
       totalPaid: totalPaidNum,
       status: autoStatus,
       startDate: loanBorrowDate,
       borrowDate: loanBorrowDate,
-      lastPaidDate: loanLastPaidDate,
+      lastPaidDate: autoFetchedLastPaidDate,
       dueDateDay: 10,
-      paymentHistory: editingLoan?.paymentHistory || [],
+      paymentHistory: existingHistory,
     };
 
     if (editingLoan) {
@@ -692,11 +760,12 @@ export const ExpenseManagerView: React.FC<ExpenseManagerViewProps> = ({
     const newTotalPaid = updatedHistory.reduce((sum, p) => sum + p.amount, 0);
     const newStatus =
       newTotalPaid >= loan.principalAmount ? 'full_paid' : newTotalPaid > 0 ? 'partially_paid' : 'active';
+    const latestPaidDate = getLatestRepaymentDate(updatedHistory) || quickPayDate;
 
     const updatedLoan: LoanItem = {
       ...loan,
       totalPaid: newTotalPaid,
-      lastPaidDate: quickPayDate,
+      lastPaidDate: latestPaidDate,
       status: newStatus,
       paymentHistory: updatedHistory,
     };
@@ -735,13 +804,14 @@ export const ExpenseManagerView: React.FC<ExpenseManagerViewProps> = ({
     const newTotalPaid = updatedPayments.reduce((sum, p) => sum + p.amount, 0);
     const newStatus =
       newTotalPaid >= targetLoan.principalAmount ? 'full_paid' : newTotalPaid > 0 ? 'partially_paid' : 'active';
+    const latestPaidDate = getLatestRepaymentDate(updatedPayments) || newDate;
 
     const updatedLoan: LoanItem = {
       ...targetLoan,
       totalPaid: newTotalPaid,
       status: newStatus,
       paymentHistory: updatedPayments,
-      lastPaidDate: newDate,
+      lastPaidDate: latestPaidDate,
     };
 
     onUpdateLoan(updatedLoan);
@@ -759,12 +829,14 @@ export const ExpenseManagerView: React.FC<ExpenseManagerViewProps> = ({
     const newTotalPaid = updatedPayments.reduce((sum, p) => sum + p.amount, 0);
     const newStatus =
       newTotalPaid >= targetLoan.principalAmount ? 'full_paid' : newTotalPaid > 0 ? 'partially_paid' : 'active';
+    const latestPaidDate = getLatestRepaymentDate(updatedPayments) || '';
 
     const updatedLoan: LoanItem = {
       ...targetLoan,
       totalPaid: newTotalPaid,
       status: newStatus,
       paymentHistory: updatedPayments,
+      lastPaidDate: latestPaidDate,
     };
 
     onUpdateLoan(updatedLoan);
@@ -951,15 +1023,28 @@ export const ExpenseManagerView: React.FC<ExpenseManagerViewProps> = ({
           </p>
         </div>
 
-        <button
-          onClick={handleExportSheets}
-          disabled={isExporting}
-          className="px-2.5 py-1.5 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 text-[11px] font-semibold flex items-center gap-1.5 cursor-pointer shadow-2xs transition-colors"
-          title="Export to Google Sheets"
-        >
-          <FileSpreadsheet className="w-3.5 h-3.5" />
-          <span className="hidden sm:inline">Google Sheets</span>
-        </button>
+        <div className="flex items-center gap-1.5">
+          {onFetchFromSheet && (
+            <button
+              onClick={handleFetchFromSheets}
+              disabled={isFetchingSheet}
+              className="px-2.5 py-1.5 rounded-lg bg-sky-500/10 hover:bg-sky-500/20 text-sky-600 dark:text-sky-400 border border-sky-500/20 text-[11px] font-semibold flex items-center gap-1.5 cursor-pointer shadow-2xs transition-colors"
+              title="Pull latest changes from Google Sheet into App"
+            >
+              <FileSpreadsheet className={`w-3.5 h-3.5 ${isFetchingSheet ? 'animate-spin' : ''}`} />
+              <span className="hidden sm:inline">{isFetchingSheet ? 'Fetching...' : 'Pull Sheet'}</span>
+            </button>
+          )}
+          <button
+            onClick={handleExportSheets}
+            disabled={isExporting}
+            className="px-2.5 py-1.5 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 text-[11px] font-semibold flex items-center gap-1.5 cursor-pointer shadow-2xs transition-colors"
+            title="Save & Sync to Master Google Sheet (2-Way Auto-Save Active)"
+          >
+            <FileSpreadsheet className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">{isExporting ? 'Syncing...' : 'Sync Sheet'}</span>
+          </button>
+        </div>
       </div>
 
       {exportedSheetUrl && (
@@ -1864,21 +1949,24 @@ export const ExpenseManagerView: React.FC<ExpenseManagerViewProps> = ({
                         </div>
                       </div>
 
-                      {/* Loan Title */}
+                      {/* Loan Title & Dates */}
                       <div>
                         <h3 className="text-sm font-black text-slate-900 dark:text-white line-clamp-2 leading-snug">
                           {currentLoan.title}
                         </h3>
-                        <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5">
-                          Borrowed: {currentLoan.borrowDate || currentLoan.startDate || 'N/A'}
-                        </p>
+                        <div className="flex items-center justify-between gap-2 text-[10px] text-slate-500 dark:text-slate-400 mt-0.5">
+                          <span>Borrowed: {currentLoan.borrowDate || currentLoan.startDate || 'N/A'}</span>
+                          <span className="font-mono font-bold text-emerald-700 dark:text-emerald-400">
+                            Last Paid: {getEffectiveLastPaidDate(currentLoan)}
+                          </span>
+                        </div>
                       </div>
                     </div>
 
                     {/* Middle Section: COMPLETE DIGITS DISPLAY (No truncation or ellipsis!) */}
-                    <div className="space-y-3 my-auto py-2">
+                    <div className="space-y-2.5 my-auto py-1.5">
                       {/* Principal Big Banner */}
-                      <div className="p-3 rounded-2xl bg-indigo-500/10 dark:bg-indigo-950/40 border border-indigo-500/20 text-center">
+                      <div className="p-2.5 rounded-2xl bg-indigo-500/10 dark:bg-indigo-950/40 border border-indigo-500/20 text-center">
                         <span className="text-[9px] uppercase font-bold text-slate-600 dark:text-slate-400 tracking-wider block">
                           Total Loan Amount
                         </span>
@@ -1908,15 +1996,21 @@ export const ExpenseManagerView: React.FC<ExpenseManagerViewProps> = ({
                         </div>
                       </div>
 
-                      {/* Monthly EMI & Interest Rate (if configured) */}
-                      {hasEmi && (
-                        <div className="flex items-center justify-between text-[10px] px-1">
-                          <span className="text-slate-600 dark:text-slate-400 font-semibold">Monthly EMI:</span>
-                          <span className="font-mono font-black text-rose-600 dark:text-rose-400">
-                            ₹{currentLoan.monthlyEmi.toLocaleString('en-IN')}/mo
+                      {/* Interest Rate & Monthly EMI Row (Always shown on Loan Card) */}
+                      <div className="grid grid-cols-2 gap-2 text-center">
+                        <div className="py-1.5 px-2 rounded-xl bg-indigo-50/80 dark:bg-indigo-950/30 border border-indigo-200/70 dark:border-indigo-800/50 flex items-center justify-between text-[10px]">
+                          <span className="text-slate-600 dark:text-slate-400 font-bold">Interest:</span>
+                          <span className="font-mono font-black text-indigo-700 dark:text-indigo-300">
+                            {currentLoan.interestRate ?? 0}% p.a.
                           </span>
                         </div>
-                      )}
+                        <div className="py-1.5 px-2 rounded-xl bg-rose-50/80 dark:bg-rose-950/30 border border-rose-200/70 dark:border-rose-800/50 flex items-center justify-between text-[10px]">
+                          <span className="text-slate-600 dark:text-slate-400 font-bold">EMI:</span>
+                          <span className="font-mono font-black text-rose-600 dark:text-rose-400">
+                            {hasEmi ? `₹${currentLoan.monthlyEmi.toLocaleString('en-IN')}/mo` : '₹0/mo'}
+                          </span>
+                        </div>
+                      </div>
 
                       {/* Progress Bar & Percentage */}
                       <div className="space-y-1">
@@ -2037,8 +2131,8 @@ export const ExpenseManagerView: React.FC<ExpenseManagerViewProps> = ({
                       </div>
                     </div>
 
-                    {/* Dates Overview */}
-                    <div className="flex items-center justify-between bg-white/80 dark:bg-slate-800/80 p-2.5 rounded-2xl text-[11px] border border-indigo-100 dark:border-slate-700/60">
+                    {/* Dates & Interest Overview */}
+                    <div className="grid grid-cols-3 gap-2 bg-white/80 dark:bg-slate-800/80 p-2.5 rounded-2xl text-[11px] border border-indigo-100 dark:border-slate-700/60">
                       <div>
                         <span className="text-[9px] text-slate-500 dark:text-slate-400 uppercase font-semibold block">
                           Borrow Date
@@ -2047,12 +2141,20 @@ export const ExpenseManagerView: React.FC<ExpenseManagerViewProps> = ({
                           {selectedLoan.borrowDate || selectedLoan.startDate || 'N/A'}
                         </span>
                       </div>
+                      <div className="text-center">
+                        <span className="text-[9px] text-slate-500 dark:text-slate-400 uppercase font-semibold block">
+                          Interest Rate
+                        </span>
+                        <span className="font-mono font-bold text-indigo-700 dark:text-indigo-400">
+                          {selectedLoan.interestRate ?? 0}% p.a.
+                        </span>
+                      </div>
                       <div className="text-right">
                         <span className="text-[9px] text-slate-500 dark:text-slate-400 uppercase font-semibold block">
                           Last Payment Date
                         </span>
                         <span className="font-mono font-bold text-emerald-700 dark:text-emerald-400">
-                          {selectedLoan.lastPaidDate || 'N/A'}
+                          {getEffectiveLastPaidDate(selectedLoan)}
                         </span>
                       </div>
                     </div>
@@ -2997,7 +3099,7 @@ export const ExpenseManagerView: React.FC<ExpenseManagerViewProps> = ({
                 </div>
                 <div>
                   <label className="text-[10px] text-indigo-800 dark:text-indigo-300 font-bold block mb-1">
-                    Date User Paid (Last)
+                    Last Payment Date (Auto from Repayment)
                   </label>
                   <input
                     type="date"
@@ -3093,16 +3195,31 @@ export const ExpenseManagerView: React.FC<ExpenseManagerViewProps> = ({
 
               {/* Monthly EMI (Only if applicable) */}
               <div>
-                <label className="text-[10px] text-slate-700 dark:text-slate-300 font-bold block mb-1">
-                  Monthly EMI (₹) (Optional - leave blank if no EMI)
-                </label>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-[10px] text-slate-700 dark:text-slate-300 font-bold block">
+                    Monthly EMI (₹) (Enter 0 for no EMI, or leave blank to auto-calculate)
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setLoanEmi('0')}
+                    className="text-[9.5px] font-bold px-2 py-0.5 rounded bg-slate-200 dark:bg-slate-800 hover:bg-indigo-500/20 text-indigo-700 dark:text-indigo-300 cursor-pointer transition-colors"
+                  >
+                    Set 0 (No EMI)
+                  </button>
+                </div>
                 <input
                   type="number"
-                  placeholder="Auto-calculated if blank or leave 0"
+                  min="0"
+                  placeholder="Leave blank to auto-calculate, or enter 0 for no EMI"
                   value={loanEmi}
                   onChange={(e) => setLoanEmi(e.target.value)}
                   className="w-full p-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-white font-mono"
                 />
+                {loanEmi.trim() !== '' && parseFloat(loanEmi) === 0 && (
+                  <p className="text-[9.5px] text-emerald-600 dark:text-emerald-400 font-semibold mt-1">
+                    ✓ Monthly EMI set to ₹0 — auto-calculation is disabled for this loan.
+                  </p>
+                )}
               </div>
 
               <div className="flex justify-end gap-2 pt-2">

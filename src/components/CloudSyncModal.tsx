@@ -16,7 +16,7 @@ import {
   LogIn,
 } from 'lucide-react';
 import { uploadBackupToGoogleDrive } from '../services/googleDrive';
-import { exportMultiSectionToGoogleSheets } from '../services/googleSheets';
+import { exportMultiSectionToGoogleSheets, getMasterSpreadsheetUrl } from '../services/googleSheets';
 import { createGoogleCalendarEvent } from '../services/googleCalendar';
 import {
   googleSignIn,
@@ -33,6 +33,7 @@ interface CloudSyncModalProps {
   onUserChange: (user: User | null) => void;
   getAllData: () => any;
   onRestoreData: (data: any) => void;
+  onFetchFromSheet?: () => Promise<boolean>;
   events: CalendarEvent[];
   expenses: ExpenseRecord[];
   onUpdateEvent: (event: CalendarEvent) => void;
@@ -46,6 +47,7 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
   onUserChange,
   getAllData,
   onRestoreData,
+  onFetchFromSheet,
   events,
   expenses,
   onUpdateEvent,
@@ -57,7 +59,11 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
   );
 
   const [isSheetsExporting, setIsSheetsExporting] = useState(false);
-  const [sheetsResult, setSheetsResult] = useState<{ id: string; url: string } | null>(null);
+  const [isSheetsFetching, setIsSheetsFetching] = useState(false);
+  const [sheetsResult, setSheetsResult] = useState<{ id: string; url: string } | null>(() => {
+    const existingUrl = getMasterSpreadsheetUrl();
+    return existingUrl ? { id: 'master', url: existingUrl } : null;
+  });
 
   const [isCalendarSyncing, setIsCalendarSyncing] = useState(false);
   const [calendarSyncCount, setCalendarSyncCount] = useState<number | null>(null);
@@ -81,8 +87,28 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
       const res = await googleSignIn(emailInput);
       if (res?.user) {
         onUserChange(res.user);
+        let sheetFetched = false;
+        if (onFetchFromSheet) {
+          sheetFetched = await onFetchFromSheet();
+        }
+        if (!sheetFetched) {
+          try {
+            const created = await exportMultiSectionToGoogleSheets(
+              getAllData(),
+              'Dr. Ravi Shankar - LifeOS Master Ledger'
+            );
+            setSheetsResult({ id: created.spreadsheetId, url: created.spreadsheetUrl });
+          } catch {
+            // ignore background init error
+          }
+        } else {
+          const url = getMasterSpreadsheetUrl();
+          if (url) setSheetsResult({ id: 'master', url });
+        }
         setSuccessMessage(
-          `Logged in as ${res.user.email}. Your email is saved permanently and will stay logged in on every website or APK launch!`
+          sheetFetched
+            ? `Logged in as ${res.user.email} & fetched your latest Master Google Sheet data into the app! Two-way auto-save is active.`
+            : `Logged in as ${res.user.email}. Your email is saved permanently and two-way Google Sheet auto-save is active!`
         );
       }
     } catch (e: any) {
@@ -135,6 +161,36 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
       setErrorMessage(err.message || 'Failed to save to Google Drive');
     } finally {
       setIsDriveBackingUp(false);
+    }
+  };
+
+  const handleSheetsFetch = async () => {
+    if (!user) {
+      setErrorMessage('Please sign in with Google first.');
+      return;
+    }
+    if (!onFetchFromSheet) return;
+
+    setIsSheetsFetching(true);
+    setErrorMessage(null);
+    setSuccessMessage(null);
+
+    try {
+      const fetched = await onFetchFromSheet();
+      const url = getMasterSpreadsheetUrl();
+      if (url) setSheetsResult({ id: 'master', url });
+      if (fetched) {
+        setSuccessMessage(
+          'Fetched latest updated Master Google Sheet from Google Drive and updated all app sections!'
+        );
+      } else {
+        setErrorMessage('No existing Master Google Sheet found in Drive yet. Click "Save to Sheet" first.');
+      }
+    } catch (err: any) {
+      console.error(err);
+      setErrorMessage(err.message || 'Failed to fetch from Google Sheets');
+    } finally {
+      setIsSheetsFetching(false);
     }
   };
 
@@ -380,7 +436,7 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
             </button>
           </div>
 
-          {/* Item 2: Google Sheets */}
+          {/* Item 2: Google Sheets (2-Way Auto-Sync) */}
           <div className={`p-4 rounded-2xl border flex flex-col sm:flex-row sm:items-center justify-between gap-4 ${
             isDark ? 'bg-slate-800/60 border-slate-700/60' : 'bg-white border-slate-200 shadow-2xs'
           }`}>
@@ -389,9 +445,16 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
                 <FileSpreadsheet className="w-5 h-5" />
               </div>
               <div>
-                <h4 className="text-xs font-bold text-slate-900 dark:text-white">Master Multi-Page Google Sheet Sync</h4>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h4 className="text-xs font-bold text-slate-900 dark:text-white">
+                    2-Way Master Google Sheet Sync
+                  </h4>
+                  <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30">
+                    Live Auto-Save Active
+                  </span>
+                </div>
                 <p className="text-[11px] text-slate-600 dark:text-slate-400 mt-0.5 leading-relaxed">
-                  Creates dedicated pages for Expenses, Investments, Loans, Habits, Calendar &amp; Diary, erasing any deleted records.
+                  Automatically saves every change made in the app to your same Master Google Sheet, and fetches updated sheet data into the app when you log in or click Fetch.
                 </p>
                 {sheetsResult && (
                   <a
@@ -400,21 +463,35 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
                     rel="noreferrer"
                     className="inline-flex items-center gap-1 text-[10px] text-emerald-600 dark:text-emerald-400 font-bold hover:underline mt-1"
                   >
-                    <span>Open created sheet in Google Sheets</span>
+                    <span>Open Master Sheet in Google Sheets</span>
                     <ExternalLink className="w-3 h-3" />
                   </a>
                 )}
               </div>
             </div>
 
-            <button
-              onClick={handleSheetsExport}
-              disabled={isSheetsExporting}
-              className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-bold text-xs flex items-center justify-center gap-1.5 shrink-0 shadow-md shadow-emerald-950/20 cursor-pointer"
-            >
-              <FileSpreadsheet className={`w-3.5 h-3.5 ${isSheetsExporting ? 'animate-spin' : ''}`} />
-              <span>{isSheetsExporting ? 'Exporting...' : 'Export to Sheets'}</span>
-            </button>
+            <div className="flex items-center gap-2 shrink-0">
+              {onFetchFromSheet && (
+                <button
+                  onClick={handleSheetsFetch}
+                  disabled={isSheetsFetching}
+                  className="px-3 py-2 rounded-xl bg-sky-600 hover:bg-sky-500 disabled:opacity-50 text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-md shadow-sky-950/20 cursor-pointer"
+                  title="Fetch latest data from your Google Sheet into the app"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${isSheetsFetching ? 'animate-spin' : ''}`} />
+                  <span>{isSheetsFetching ? 'Fetching...' : 'Fetch Sheet'}</span>
+                </button>
+              )}
+              <button
+                onClick={handleSheetsExport}
+                disabled={isSheetsExporting}
+                className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-md shadow-emerald-950/20 cursor-pointer"
+                title="Save all current app data into the same Master Google Sheet"
+              >
+                <FileSpreadsheet className={`w-3.5 h-3.5 ${isSheetsExporting ? 'animate-spin' : ''}`} />
+                <span>{isSheetsExporting ? 'Saving...' : 'Save to Sheet'}</span>
+              </button>
+            </div>
           </div>
 
           {/* Item 3: Google Calendar */}

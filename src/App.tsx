@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import type { User } from 'firebase/auth';
-import { initAuth, googleSignIn, logout, getSavedUser } from './services/firebase';
+import { initAuth, googleSignIn, logout, getSavedUser, TOKEN_STORAGE_KEY } from './services/firebase';
 import {
   getStoredData,
   setStoredData,
@@ -20,7 +20,11 @@ import {
   defaultEventsList,
   syncExpensesToMonthlyArchive,
 } from './services/storage';
-import { checkAndRunMonthly5thSheetAutoSync } from './services/googleSheets';
+import {
+  checkAndRunMonthly5thSheetAutoSync,
+  exportMultiSectionToGoogleSheets,
+  fetchFromMasterGoogleSheet,
+} from './services/googleSheets';
 import type {
   CalendarEvent,
   NoteItem,
@@ -116,13 +120,86 @@ export default function App() {
     getStoredData(STORAGE_KEYS.JOURNAL, defaultJournalEntries)
   );
 
-  // Sync Auth & Hydrate Persistent IndexedDB on Launch (for Website, Vercel & Android APK)
+  // Two-Way Google Sheet Sync guards
+  const isApplyingRemoteSheetRef = useRef(false);
+  const isInitialSheetFetchDoneRef = useRef(false);
+  const sheetAutoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const applyFetchedSheetData = (data: any) => {
+    isApplyingRemoteSheetRef.current = true;
+    if (data.milestones && Array.isArray(data.milestones) && data.milestones.length > 0) {
+      setMilestones(data.milestones);
+    }
+    if (data.loans && Array.isArray(data.loans)) {
+      setLoans(data.loans);
+    }
+    if (data.investments && Array.isArray(data.investments)) {
+      setInvestments(data.investments);
+    }
+    if (data.expenses && Array.isArray(data.expenses)) {
+      setExpenses(data.expenses);
+      syncExpensesToMonthlyArchive(data.expenses);
+    }
+    if (data.notes && Array.isArray(data.notes)) {
+      setNotes(data.notes);
+    }
+    if (data.tasks && Array.isArray(data.tasks)) {
+      setTasks(data.tasks);
+    }
+    if (data.events && Array.isArray(data.events)) {
+      setEvents(data.events);
+    }
+    if (data.notifications && Array.isArray(data.notifications) && data.notifications.length > 0) {
+      setNotifications(data.notifications);
+    }
+    if (data.dinacharyaLogs && Array.isArray(data.dinacharyaLogs) && data.dinacharyaLogs.length > 0) {
+      setDinacharyaLogs(data.dinacharyaLogs);
+    }
+    if (data.habits && Array.isArray(data.habits) && data.habits.length > 0) {
+      setHabits(data.habits);
+    }
+    if (data.journalEntries && Array.isArray(data.journalEntries)) {
+      setJournalEntries(data.journalEntries);
+    }
+    setTimeout(() => {
+      isApplyingRemoteSheetRef.current = false;
+      isInitialSheetFetchDoneRef.current = true;
+    }, 800);
+  };
+
+  const syncFromMasterSheetToApp = async (): Promise<boolean> => {
+    try {
+      const res = await fetchFromMasterGoogleSheet();
+      if (res.found && res.data && Object.keys(res.data).length > 0) {
+        applyFetchedSheetData(res.data);
+        return true;
+      }
+      isInitialSheetFetchDoneRef.current = true;
+      return false;
+    } catch {
+      isInitialSheetFetchDoneRef.current = true;
+      return false;
+    }
+  };
+
+  // Sync Auth, Hydrate Persistent IndexedDB & Pull Latest Google Sheet Data on Launch
   useEffect(() => {
+    let hasAttemptedInitialSheetPull = false;
+
     const unsub = initAuth(
-      (u) => setUser(u),
+      (u, token) => {
+        setUser(u);
+        if (token && !hasAttemptedInitialSheetPull) {
+          hasAttemptedInitialSheetPull = true;
+          syncFromMasterSheetToApp();
+        } else if (!token) {
+          isInitialSheetFetchDoneRef.current = true;
+        }
+      },
       () => {
         const saved = getSavedUser();
         setUser(saved);
+        isInitialSheetFetchDoneRef.current = true;
       }
     );
 
@@ -184,18 +261,23 @@ export default function App() {
     // Auto-save full snapshot to localStorage + IndexedDB
     autoSaveToCloud(fullSnapshot);
 
+    // ALWAYS AUTO-SAVE CHANGES MADE IN APP TO THE MASTER GOOGLE SHEET (Debounced 1.2s)
+    if (!isApplyingRemoteSheetRef.current && isInitialSheetFetchDoneRef.current) {
+      const hasToken = Boolean(localStorage.getItem(TOKEN_STORAGE_KEY));
+      if (hasToken) {
+        if (sheetAutoSaveTimerRef.current) {
+          clearTimeout(sheetAutoSaveTimerRef.current);
+        }
+        sheetAutoSaveTimerRef.current = setTimeout(() => {
+          exportMultiSectionToGoogleSheets(fullSnapshot).catch((err) => {
+            console.warn('Background Google Sheet auto-save note:', err);
+          });
+        }, 1200);
+      }
+    }
+
     // Every 5th of month, auto-update the Master Google Sheet if connected
-    checkAndRunMonthly5thSheetAutoSync({
-      expenses,
-      investments,
-      loans,
-      habits,
-      dinacharyaLogs,
-      tasks,
-      notes,
-      events,
-      journalEntries,
-    }).catch(() => {});
+    checkAndRunMonthly5thSheetAutoSync(fullSnapshot).catch(() => {});
 
     const handlePersistOnHide = () => {
       autoSaveToCloud(fullSnapshot);
@@ -203,6 +285,9 @@ export default function App() {
     window.addEventListener('pagehide', handlePersistOnHide);
     document.addEventListener('visibilitychange', handlePersistOnHide);
     return () => {
+      if (sheetAutoSaveTimerRef.current) {
+        clearTimeout(sheetAutoSaveTimerRef.current);
+      }
       window.removeEventListener('pagehide', handlePersistOnHide);
       document.removeEventListener('visibilitychange', handlePersistOnHide);
     };
@@ -329,6 +414,7 @@ export default function App() {
             onDeleteInvestment={(id) => setInvestments((prev) => prev.filter((i) => i.id !== id))}
             user={user}
             onRequireAuth={() => setIsCloudSyncOpen(true)}
+            onFetchFromSheet={syncFromMasterSheetToApp}
             isDark={isDark}
           />
         )}
@@ -472,7 +558,13 @@ export default function App() {
         onSignIn={async () => {
           try {
             const res = await googleSignIn();
-            if (res?.user) setUser(res.user);
+            if (res?.user) {
+              setUser(res.user);
+              const pulled = await syncFromMasterSheetToApp();
+              if (!pulled) {
+                exportMultiSectionToGoogleSheets(getAllCurrentData()).catch(() => {});
+              }
+            }
           } catch (e) {
             console.error(e);
           }
@@ -501,6 +593,7 @@ export default function App() {
         onUserChange={setUser}
         getAllData={getAllCurrentData}
         onRestoreData={handleRestoreData}
+        onFetchFromSheet={syncFromMasterSheetToApp}
         events={events}
         expenses={expenses}
         onUpdateEvent={(event) =>

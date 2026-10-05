@@ -1514,7 +1514,7 @@ function generateCustomClinicalResponse(query: MedicalCaseQuery): MedicalAnalysi
 
   return {
     ayurvedicAnalysis: {
-      vyadhiVinischaya: `${disease} - Samprapti Evaluation for ${query.patientAge || 'Adult'} ${query.patientGender || 'Patient'}`,
+      vyadhiVinischaya: disease,
       doshaDushya: {
         dosha: 'Tridoshic assessment: Vata-Pitta / Vata-Kapha Prakopa based on clinical Rogi Pariksha',
         dushya: 'Rasa, Rakta, Mamsa, and localized Srotas',
