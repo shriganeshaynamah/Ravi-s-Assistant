@@ -18,6 +18,8 @@ export const STORAGE_KEYS = {
   NOTES: 'ayurlife_notes',
   CHECKLISTS: 'ayurlife_checklists',
   EXPENSES: 'ayurlife_expenses',
+  EXPENSES_HISTORY: 'ayurlife_expenses_monthly_archive_v1',
+  MONTHLY_5TH_SHEET_SYNC: 'ayurlife_monthly_5th_sheet_sync',
   LOANS: 'ayurlife_loans',
   INVESTMENTS: 'ayurlife_investments',
   MILESTONES: 'ayurlife_milestones',
@@ -27,59 +29,401 @@ export const STORAGE_KEYS = {
   JOURNAL: 'ayurlife_journal',
 };
 
-// Generate 30-day realistic seed logs for Dr. Ravi Shankar's Dinacharya consistency
-export const generateDefaultDinacharyaLogs = (): DinacharyaLog[] => {
-  const logs: DinacharyaLog[] = [];
-  const today = new Date();
+// Seed Dinacharya Logs from user JSON
+export const defaultDinacharyaLogs: DinacharyaLog[] = [
+  {
+    date: '2026-10-05',
+    brahmaMuhurtaWakeup: false,
+    ushapanWarmWater: true,
+    dantadhavanaJivhaNirlekhana: true,
+    nasyaKavalaGandusha: false,
+    abhyangaOilMassage: false,
+    vyayamaYogaPranayama: true,
+    snanaBathing: true,
+    sattvicAharaDiet: true,
+    nidraSleepQuality: 3,
+    notes: 'Purna Dinacharya adherence. High mental clarity and balanced Tridosha.',
+  },
+  {
+    date: '2026-10-04',
+    brahmaMuhurtaWakeup: true,
+    ushapanWarmWater: true,
+    dantadhavanaJivhaNirlekhana: true,
+    nasyaKavalaGandusha: true,
+    abhyangaOilMassage: true,
+    vyayamaYogaPranayama: false,
+    snanaBathing: true,
+    sattvicAharaDiet: true,
+    nidraSleepQuality: 5,
+    notes: 'Brahma Muhurta meditation & Charaka Samhita recitation.',
+  },
+  {
+    date: '2026-10-03',
+    brahmaMuhurtaWakeup: false,
+    ushapanWarmWater: true,
+    dantadhavanaJivhaNirlekhana: true,
+    nasyaKavalaGandusha: true,
+    abhyangaOilMassage: true,
+    vyayamaYogaPranayama: true,
+    snanaBathing: true,
+    sattvicAharaDiet: false,
+    nidraSleepQuality: 3,
+    notes: 'Hospital clinical ward duty in morning. Agni balanced with Sunthi kwath.',
+  },
+  {
+    date: '2026-10-02',
+    brahmaMuhurtaWakeup: true,
+    ushapanWarmWater: true,
+    dantadhavanaJivhaNirlekhana: true,
+    nasyaKavalaGandusha: true,
+    abhyangaOilMassage: false,
+    vyayamaYogaPranayama: true,
+    snanaBathing: true,
+    sattvicAharaDiet: true,
+    nidraSleepQuality: 5,
+    notes: 'Evening Pranayama & Nadi Shodhana. Peaceful sleep.',
+  },
+  {
+    date: '2026-10-01',
+    brahmaMuhurtaWakeup: false,
+    ushapanWarmWater: true,
+    dantadhavanaJivhaNirlekhana: true,
+    nasyaKavalaGandusha: false,
+    abhyangaOilMassage: true,
+    vyayamaYogaPranayama: true,
+    snanaBathing: true,
+    sattvicAharaDiet: true,
+    nidraSleepQuality: 3,
+    notes: 'Deep focus on Kayachikitsa clinical case notes.',
+  },
+  {
+    date: '2026-09-30',
+    brahmaMuhurtaWakeup: true,
+    ushapanWarmWater: true,
+    dantadhavanaJivhaNirlekhana: true,
+    nasyaKavalaGandusha: false,
+    abhyangaOilMassage: true,
+    vyayamaYogaPranayama: false,
+    snanaBathing: true,
+    sattvicAharaDiet: true,
+    nidraSleepQuality: 4,
+    notes: 'Full herbal Abhyanga with sesame oil. High vitality and Ojas.',
+  },
+  {
+    date: '2026-09-29',
+    brahmaMuhurtaWakeup: true,
+    ushapanWarmWater: true,
+    dantadhavanaJivhaNirlekhana: true,
+    nasyaKavalaGandusha: false,
+    abhyangaOilMassage: true,
+    vyayamaYogaPranayama: true,
+    snanaBathing: true,
+    sattvicAharaDiet: true,
+    nidraSleepQuality: 4,
+    notes: 'Ushnodaka routine followed strictly. Sattvic diet maintained.',
+  },
+  {
+    date: '2026-09-28',
+    brahmaMuhurtaWakeup: true,
+    ushapanWarmWater: true,
+    dantadhavanaJivhaNirlekhana: true,
+    nasyaKavalaGandusha: true,
+    abhyangaOilMassage: false,
+    vyayamaYogaPranayama: true,
+    snanaBathing: true,
+    sattvicAharaDiet: true,
+    nidraSleepQuality: 5,
+    notes: 'Purna Dinacharya adherence. High mental clarity and balanced Tridosha.',
+  },
+  {
+    date: '2026-09-27',
+    brahmaMuhurtaWakeup: true,
+    ushapanWarmWater: true,
+    dantadhavanaJivhaNirlekhana: true,
+    nasyaKavalaGandusha: true,
+    abhyangaOilMassage: true,
+    vyayamaYogaPranayama: true,
+    snanaBathing: true,
+    sattvicAharaDiet: true,
+    nidraSleepQuality: 5,
+    notes: 'Brahma Muhurta meditation & Charaka Samhita recitation.',
+  },
+  {
+    date: '2026-09-26',
+    brahmaMuhurtaWakeup: false,
+    ushapanWarmWater: true,
+    dantadhavanaJivhaNirlekhana: true,
+    nasyaKavalaGandusha: true,
+    abhyangaOilMassage: true,
+    vyayamaYogaPranayama: false,
+    snanaBathing: true,
+    sattvicAharaDiet: false,
+    nidraSleepQuality: 3,
+    notes: 'Hospital clinical ward duty in morning. Agni balanced with Sunthi kwath.',
+  },
+  {
+    date: '2026-09-25',
+    brahmaMuhurtaWakeup: true,
+    ushapanWarmWater: true,
+    dantadhavanaJivhaNirlekhana: true,
+    nasyaKavalaGandusha: false,
+    abhyangaOilMassage: false,
+    vyayamaYogaPranayama: true,
+    snanaBathing: true,
+    sattvicAharaDiet: true,
+    nidraSleepQuality: 4,
+    notes: 'Evening Pranayama & Nadi Shodhana. Peaceful sleep.',
+  },
+  {
+    date: '2026-09-24',
+    brahmaMuhurtaWakeup: false,
+    ushapanWarmWater: true,
+    dantadhavanaJivhaNirlekhana: true,
+    nasyaKavalaGandusha: false,
+    abhyangaOilMassage: false,
+    vyayamaYogaPranayama: true,
+    snanaBathing: true,
+    sattvicAharaDiet: true,
+    nidraSleepQuality: 3,
+    notes: 'Deep focus on Kayachikitsa clinical case notes.',
+  },
+  {
+    date: '2026-09-23',
+    brahmaMuhurtaWakeup: true,
+    ushapanWarmWater: true,
+    dantadhavanaJivhaNirlekhana: true,
+    nasyaKavalaGandusha: true,
+    abhyangaOilMassage: false,
+    vyayamaYogaPranayama: false,
+    snanaBathing: true,
+    sattvicAharaDiet: true,
+    nidraSleepQuality: 5,
+    notes: 'Full herbal Abhyanga with sesame oil. High vitality and Ojas.',
+  },
+  {
+    date: '2026-09-22',
+    brahmaMuhurtaWakeup: false,
+    ushapanWarmWater: true,
+    dantadhavanaJivhaNirlekhana: true,
+    nasyaKavalaGandusha: true,
+    abhyangaOilMassage: false,
+    vyayamaYogaPranayama: true,
+    snanaBathing: true,
+    sattvicAharaDiet: false,
+    nidraSleepQuality: 3,
+    notes: 'Ushnodaka routine followed strictly. Sattvic diet maintained.',
+  },
+  {
+    date: '2026-09-21',
+    brahmaMuhurtaWakeup: true,
+    ushapanWarmWater: true,
+    dantadhavanaJivhaNirlekhana: true,
+    nasyaKavalaGandusha: true,
+    abhyangaOilMassage: false,
+    vyayamaYogaPranayama: true,
+    snanaBathing: true,
+    sattvicAharaDiet: true,
+    nidraSleepQuality: 5,
+    notes: 'Purna Dinacharya adherence. High mental clarity and balanced Tridosha.',
+  },
+  {
+    date: '2026-09-20',
+    brahmaMuhurtaWakeup: false,
+    ushapanWarmWater: true,
+    dantadhavanaJivhaNirlekhana: true,
+    nasyaKavalaGandusha: false,
+    abhyangaOilMassage: true,
+    vyayamaYogaPranayama: true,
+    snanaBathing: true,
+    sattvicAharaDiet: true,
+    nidraSleepQuality: 3,
+    notes: 'Brahma Muhurta meditation & Charaka Samhita recitation.',
+  },
+  {
+    date: '2026-09-19',
+    brahmaMuhurtaWakeup: true,
+    ushapanWarmWater: true,
+    dantadhavanaJivhaNirlekhana: true,
+    nasyaKavalaGandusha: false,
+    abhyangaOilMassage: true,
+    vyayamaYogaPranayama: false,
+    snanaBathing: true,
+    sattvicAharaDiet: true,
+    nidraSleepQuality: 4,
+    notes: 'Hospital clinical ward duty in morning. Agni balanced with Sunthi kwath.',
+  },
+  {
+    date: '2026-09-18',
+    brahmaMuhurtaWakeup: true,
+    ushapanWarmWater: true,
+    dantadhavanaJivhaNirlekhana: true,
+    nasyaKavalaGandusha: false,
+    abhyangaOilMassage: true,
+    vyayamaYogaPranayama: true,
+    snanaBathing: true,
+    sattvicAharaDiet: true,
+    nidraSleepQuality: 4,
+    notes: 'Evening Pranayama & Nadi Shodhana. Peaceful sleep.',
+  },
+  {
+    date: '2026-09-17',
+    brahmaMuhurtaWakeup: true,
+    ushapanWarmWater: true,
+    dantadhavanaJivhaNirlekhana: true,
+    nasyaKavalaGandusha: true,
+    abhyangaOilMassage: false,
+    vyayamaYogaPranayama: true,
+    snanaBathing: true,
+    sattvicAharaDiet: true,
+    nidraSleepQuality: 5,
+    notes: 'Deep focus on Kayachikitsa clinical case notes.',
+  },
+  {
+    date: '2026-09-16',
+    brahmaMuhurtaWakeup: true,
+    ushapanWarmWater: true,
+    dantadhavanaJivhaNirlekhana: true,
+    nasyaKavalaGandusha: true,
+    abhyangaOilMassage: false,
+    vyayamaYogaPranayama: true,
+    snanaBathing: true,
+    sattvicAharaDiet: true,
+    nidraSleepQuality: 5,
+    notes: 'Full herbal Abhyanga with sesame oil. High vitality and Ojas.',
+  },
+  {
+    date: '2026-09-15',
+    brahmaMuhurtaWakeup: false,
+    ushapanWarmWater: true,
+    dantadhavanaJivhaNirlekhana: true,
+    nasyaKavalaGandusha: true,
+    abhyangaOilMassage: false,
+    vyayamaYogaPranayama: false,
+    snanaBathing: true,
+    sattvicAharaDiet: false,
+    nidraSleepQuality: 3,
+    notes: 'Ushnodaka routine followed strictly. Sattvic diet maintained.',
+  },
+  {
+    date: '2026-09-14',
+    brahmaMuhurtaWakeup: true,
+    ushapanWarmWater: true,
+    dantadhavanaJivhaNirlekhana: true,
+    nasyaKavalaGandusha: false,
+    abhyangaOilMassage: false,
+    vyayamaYogaPranayama: true,
+    snanaBathing: true,
+    sattvicAharaDiet: true,
+    nidraSleepQuality: 4,
+    notes: 'Purna Dinacharya adherence. High mental clarity and balanced Tridosha.',
+  },
+  {
+    date: '2026-09-13',
+    brahmaMuhurtaWakeup: false,
+    ushapanWarmWater: true,
+    dantadhavanaJivhaNirlekhana: true,
+    nasyaKavalaGandusha: false,
+    abhyangaOilMassage: true,
+    vyayamaYogaPranayama: true,
+    snanaBathing: true,
+    sattvicAharaDiet: true,
+    nidraSleepQuality: 3,
+    notes: 'Brahma Muhurta meditation & Charaka Samhita recitation.',
+  },
+  {
+    date: '2026-09-12',
+    brahmaMuhurtaWakeup: true,
+    ushapanWarmWater: true,
+    dantadhavanaJivhaNirlekhana: true,
+    nasyaKavalaGandusha: true,
+    abhyangaOilMassage: true,
+    vyayamaYogaPranayama: false,
+    snanaBathing: true,
+    sattvicAharaDiet: true,
+    nidraSleepQuality: 5,
+    notes: 'Hospital clinical ward duty in morning. Agni balanced with Sunthi kwath.',
+  },
+  {
+    date: '2026-09-11',
+    brahmaMuhurtaWakeup: false,
+    ushapanWarmWater: true,
+    dantadhavanaJivhaNirlekhana: true,
+    nasyaKavalaGandusha: true,
+    abhyangaOilMassage: false,
+    vyayamaYogaPranayama: true,
+    snanaBathing: true,
+    sattvicAharaDiet: false,
+    nidraSleepQuality: 3,
+    notes: 'Evening Pranayama & Nadi Shodhana. Peaceful sleep.',
+  },
+  {
+    date: '2026-09-10',
+    brahmaMuhurtaWakeup: true,
+    ushapanWarmWater: true,
+    dantadhavanaJivhaNirlekhana: true,
+    nasyaKavalaGandusha: true,
+    abhyangaOilMassage: false,
+    vyayamaYogaPranayama: true,
+    snanaBathing: true,
+    sattvicAharaDiet: true,
+    nidraSleepQuality: 5,
+    notes: 'Deep focus on Kayachikitsa clinical case notes.',
+  },
+  {
+    date: '2026-09-09',
+    brahmaMuhurtaWakeup: false,
+    ushapanWarmWater: true,
+    dantadhavanaJivhaNirlekhana: true,
+    nasyaKavalaGandusha: false,
+    abhyangaOilMassage: true,
+    vyayamaYogaPranayama: true,
+    snanaBathing: true,
+    sattvicAharaDiet: true,
+    nidraSleepQuality: 3,
+    notes: 'Full herbal Abhyanga with sesame oil. High vitality and Ojas.',
+  },
+  {
+    date: '2026-09-08',
+    brahmaMuhurtaWakeup: true,
+    ushapanWarmWater: true,
+    dantadhavanaJivhaNirlekhana: true,
+    nasyaKavalaGandusha: false,
+    abhyangaOilMassage: true,
+    vyayamaYogaPranayama: false,
+    snanaBathing: true,
+    sattvicAharaDiet: true,
+    nidraSleepQuality: 4,
+    notes: 'Ushnodaka routine followed strictly. Sattvic diet maintained.',
+  },
+  {
+    date: '2026-09-07',
+    brahmaMuhurtaWakeup: true,
+    ushapanWarmWater: true,
+    dantadhavanaJivhaNirlekhana: true,
+    nasyaKavalaGandusha: false,
+    abhyangaOilMassage: true,
+    vyayamaYogaPranayama: true,
+    snanaBathing: true,
+    sattvicAharaDiet: true,
+    nidraSleepQuality: 4,
+    notes: 'Purna Dinacharya adherence. High mental clarity and balanced Tridosha.',
+  },
+  {
+    date: '2026-09-06',
+    brahmaMuhurtaWakeup: true,
+    ushapanWarmWater: true,
+    dantadhavanaJivhaNirlekhana: true,
+    nasyaKavalaGandusha: true,
+    abhyangaOilMassage: true,
+    vyayamaYogaPranayama: true,
+    snanaBathing: true,
+    sattvicAharaDiet: true,
+    nidraSleepQuality: 5,
+    notes: 'Brahma Muhurta meditation & Charaka Samhita recitation.',
+  },
+];
 
-  for (let i = 0; i < 30; i++) {
-    const d = new Date(today);
-    d.setDate(today.getDate() - i);
-    const dateStr = d.toISOString().split('T')[0];
-
-    const dayOfWeek = d.getDay();
-    const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
-    const cycle = (i * 7 + 3) % 11;
-
-    const bm = cycle % 3 !== 0;
-    const ush = true;
-    const dt = true;
-    const nas = cycle % 2 === 0;
-    const abh = isWeekend || cycle % 4 === 1;
-    const vy = cycle % 5 !== 0;
-    const sn = true;
-    const sat = cycle % 6 !== 0;
-    const sleep = (bm ? (cycle % 2 === 0 ? 5 : 4) : (cycle % 3 === 0 ? 3 : 4)) as 1 | 2 | 3 | 4 | 5;
-
-    const noteSamples = [
-      'Purna Dinacharya adherence. High mental clarity and balanced Tridosha.',
-      'Brahma Muhurta meditation & Charaka Samhita recitation.',
-      'Hospital clinical ward duty in morning. Agni balanced with Sunthi kwath.',
-      'Evening Pranayama & Nadi Shodhana. Peaceful sleep.',
-      'Deep focus on Kayachikitsa clinical case notes.',
-      'Full herbal Abhyanga with sesame oil. High vitality and Ojas.',
-      'Ushnodaka routine followed strictly. Sattvic diet maintained.',
-    ];
-
-    logs.push({
-      date: dateStr,
-      brahmaMuhurtaWakeup: bm,
-      ushapanWarmWater: ush,
-      dantadhavanaJivhaNirlekhana: dt,
-      nasyaKavalaGandusha: nas,
-      abhyangaOilMassage: abh,
-      vyayamaYogaPranayama: vy,
-      snanaBathing: sn,
-      sattvicAharaDiet: sat,
-      nidraSleepQuality: sleep,
-      notes: noteSamples[i % noteSamples.length],
-    });
-  }
-
-  return logs;
-};
-
-export const defaultDinacharyaLogs: DinacharyaLog[] = generateDefaultDinacharyaLogs();
+export const generateDefaultDinacharyaLogs = (): DinacharyaLog[] => defaultDinacharyaLogs;
 
 // Seed Academic / Career Milestones
 export const defaultMilestones: RoadmapMilestone[] = [
@@ -209,13 +553,78 @@ export const defaultMilestones: RoadmapMilestone[] = [
   },
 ];
 
-// Seed Loans (Cleared for manual user entry)
-export const defaultLoans: LoanItem[] = [];
+// Seed Loans from user JSON
+export const defaultLoans: LoanItem[] = [
+  {
+    id: 'loan-1791191233415',
+    title: 'KreditBee Loan',
+    lender: 'KreditBee',
+    principalAmount: 22746,
+    interestRate: 8.5,
+    tenureMonths: 36,
+    monthlyEmi: 3791,
+    totalPaid: 0,
+    status: 'active',
+    startDate: '2026-10-05',
+    borrowDate: '2026-10-05',
+    lastPaidDate: '2026-10-05',
+    dueDateDay: 10,
+    paymentHistory: [],
+  },
+  {
+    id: 'loan-1791191068291',
+    title: 'Munchun Da',
+    lender: 'Relative (Gpay+ may more)',
+    principalAmount: 7500,
+    interestRate: 8.5,
+    tenureMonths: 36,
+    monthlyEmi: 237,
+    totalPaid: 0,
+    status: 'active',
+    startDate: '2026-10-05',
+    borrowDate: '2026-10-05',
+    lastPaidDate: '2026-10-05',
+    dueDateDay: 10,
+    paymentHistory: [],
+  },
+  {
+    id: 'loan-1791190968831',
+    title: 'Parvesh Da',
+    lender: 'Relative',
+    principalAmount: 50000,
+    interestRate: 8.5,
+    tenureMonths: 36,
+    monthlyEmi: 1578,
+    totalPaid: 0,
+    status: 'active',
+    startDate: '2022-11-05',
+    borrowDate: '2022-11-05',
+    lastPaidDate: '2026-10-05',
+    dueDateDay: 10,
+    paymentHistory: [],
+  },
+  {
+    id: 'loan-1791190882502',
+    title: 'BAMS ED. LOAN',
+    lender: 'IDBI',
+    principalAmount: 400000,
+    interestRate: 12,
+    tenureMonths: 36,
+    monthlyEmi: 13286,
+    totalPaid: 0,
+    status: 'active',
+    startDate: '2026-10-05',
+    borrowDate: '2026-10-05',
+    lastPaidDate: '2026-10-05',
+    dueDateDay: 10,
+    paymentHistory: [],
+  },
+];
 
-// Seed Investments (Cleared for manual user entry)
+// Seed Investments from user JSON
 export const defaultInvestments: InvestmentItem[] = [];
 
-// Seed Notifications (short, small alerts in compact boxes)
+// Seed Notifications from user JSON
 export const defaultNotifications: AppNotification[] = [
   {
     id: 'notif-1',
@@ -255,7 +664,7 @@ export const defaultNotifications: AppNotification[] = [
   },
 ];
 
-// Seed User Custom Habits (user can add/edit/delete habits like study 2hr daily, No Fap, etc.)
+// Seed User Custom Habits from user JSON
 export const defaultHabits: HabitItem[] = [
   {
     id: 'habit-1',
@@ -263,12 +672,7 @@ export const defaultHabits: HabitItem[] = [
     description: 'Deep focus clinical study: Charaka Chikitsa Sthana & Modern Pharmacology',
     category: 'ayurveda_study',
     targetDaysPerWeek: 7,
-    completedDates: [
-      new Date().toISOString().split('T')[0],
-      new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-      new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString().split('T')[0],
-      new Date(Date.now() - 72 * 60 * 60 * 1000).toISOString().split('T')[0],
-    ],
+    completedDates: ['2026-10-05', '2026-10-04', '2026-10-03', '2026-10-02'],
     streak: 4,
     icon: 'BookOpen',
   },
@@ -278,13 +682,7 @@ export const defaultHabits: HabitItem[] = [
     description: 'Preserving Sukra Dhatu and mental focus for clinical acumen and stamina',
     category: 'discipline',
     targetDaysPerWeek: 7,
-    completedDates: [
-      new Date().toISOString().split('T')[0],
-      new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-      new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString().split('T')[0],
-      new Date(Date.now() - 72 * 60 * 60 * 1000).toISOString().split('T')[0],
-      new Date(Date.now() - 96 * 60 * 60 * 1000).toISOString().split('T')[0],
-    ],
+    completedDates: ['2026-10-05', '2026-10-04', '2026-10-03', '2026-10-02', '2026-10-01'],
     streak: 12,
     icon: 'ShieldCheck',
   },
@@ -294,10 +692,7 @@ export const defaultHabits: HabitItem[] = [
     description: 'Anuloma Viloma and Nadi Shodhana to balance Prana & Udana Vayu',
     category: 'fitness',
     targetDaysPerWeek: 7,
-    completedDates: [
-      new Date().toISOString().split('T')[0],
-      new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-    ],
+    completedDates: ['2026-10-05', '2026-10-04'],
     streak: 2,
     icon: 'Activity',
   },
@@ -307,9 +702,7 @@ export const defaultHabits: HabitItem[] = [
     description: 'Warm copper vessel water to promote Agni and flush metabolic Ama',
     category: 'dinacharya',
     targetDaysPerWeek: 7,
-    completedDates: [
-      new Date().toISOString().split('T')[0],
-    ],
+    completedDates: ['2026-10-05'],
     streak: 1,
     icon: 'Droplets',
   },
@@ -319,114 +712,81 @@ export const defaultHabits: HabitItem[] = [
     description: 'Documenting 3 patient pulse (Nadi) and tongue (Jihwa) examination patterns',
     category: 'clinic_growth',
     targetDaysPerWeek: 6,
-    completedDates: [
-      new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-    ],
+    completedDates: ['2026-10-04'],
     streak: 3,
     icon: 'ClipboardList',
   },
 ];
 
-// Seed Personal Vault & Daily Journal Entries (Passcode protected: 0002)
-export const defaultJournalEntries: JournalEntry[] = [
+// Seed Personal Vault & Daily Journal Entries from user JSON
+export const defaultJournalEntries: JournalEntry[] = [];
+
+// Seed Keep Notes from user JSON
+export const defaultKeepNotes: NoteItem[] = [];
+
+// Seed Tasks & Events from user JSON
+export const defaultTasksList: ChecklistTask[] = [];
+export const defaultEventsList: CalendarEvent[] = [];
+
+// Seed Expenses from user JSON
+export const defaultExpensesList: ExpenseRecord[] = [
   {
-    id: 'jrn-1',
-    title: 'Reflections on BAMS Clinical Diagnosis & Patient Empathy',
-    content: 'Today at the Kayachikitsa OPD, examined a 46-year-old patient suffering from chronic Sandhivata. Observed how proper Rogi-Pariksha through Trividha Pariksha (Darshana, Sparshana, Prashna) builds immediate patient trust. Feeling deeply motivated to establish our clinic with authentic Panchakarma treatments post-internship. The journey from student to practitioner is demanding, but seeing the healing potency of Ayurveda is truly inspiring.',
-    date: new Date().toISOString().split('T')[0],
-    time: '08:45 PM',
-    mood: 'inspired',
-    category: 'clinical',
-    gratitude: 'Grateful for our senior Vaidya explaining the subtle difference between Vata-Rakta and Amavata.',
-    tags: ['Clinical OPD', 'Ayurveda', 'Doctor Mindset'],
-    isPinned: true,
+    id: 'exp-1791191325300',
+    date: '2026-10-05',
+    type: 'expense',
+    amount: 3000,
+    category: 'living_personal',
+    description: 'Rent',
+    paymentMode: 'upi',
   },
   {
-    id: 'jrn-2',
-    title: 'Financial Freedom & Debt Payoff Milestone Tracking',
-    content: 'Reviewed our ₹4.5L education loan repayment roadmap. With ₹1,10,940 already paid off, the remaining ₹3.39L feels completely achievable before 2028. Sticking firmly to our ₹5,000 monthly SIP discipline in Nifty 50. Wealth generation is not about overnight gains, but consistent compounding—just like Rasayana therapy works slowly on the Saptadhatus to yield lasting Ojas.',
-    date: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-    time: '09:15 PM',
-    mood: 'victorious',
-    category: 'wealth',
-    gratitude: 'Grateful for disciplined spending and budgeting clarity.',
-    tags: ['Loans', 'SIP', 'Financial Growth'],
-    isPinned: false,
-  },
-  {
-    id: 'jrn-3',
-    title: 'Brahmacharya, Ojas & The Inner Calm of a Healer',
-    content: 'Maintained strict digital discipline and physical control. The mind feels significantly sharper, concentration during Charaka recitation has improved twofold, and fatigue during long hospital rounds has reduced. Ancient texts rightly state: "Brahmacharya is the foremost pillar of health and longevity." Keeping the commitment strong every single day.',
-    date: new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString().split('T')[0],
-    time: '10:00 PM',
-    mood: 'peaceful',
-    category: 'growth',
-    gratitude: 'Peace of mind, clean thoughts, and vibrant physical energy.',
-    tags: ['No Fap', 'Discipline', 'Ojas'],
-    isPinned: false,
+    id: 'exp-1791191283091',
+    date: '2026-10-01',
+    type: 'income',
+    amount: 5000,
+    category: 'other',
+    description: 'Bhaiya (Birthday k liy)',
+    paymentMode: 'upi',
   },
 ];
 
-// Seed Keep Notes
-export const defaultKeepNotes: NoteItem[] = [
-  {
-    id: 'note-1',
-    title: 'Amavata (Rheumatoid Arthritis) Protocol',
-    content: 'Langhana -> Swedana -> Tikta Deepana Pachana (Sunthi, Musta) -> Simhanada Guggulu 2 tab BD -> Castor oil at bedtime.',
-    category: 'clinical_case',
-    isPinned: true,
-    tags: ['Amavata', 'Kayachikitsa'],
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-    color: '#ecfdf5', // soft emerald
-    checklist: [
-      { id: 'c1', text: 'Check ESR & CRP blood markers', done: true },
-      { id: 'c2', text: 'Advise warm water & horsegram soup', done: true },
-      { id: 'c3', text: 'Strictly prohibit curd & day sleep', done: false },
-    ],
-  },
-  {
-    id: 'note-2',
-    title: 'Top 10 Adaptogenic Rasayana Herbs',
-    content: '1. Ashwagandha (Balya)\n2. Guduchi (Tridoshaghna)\n3. Shatavari (Pitta shamaka)\n4. Amalaki (Chakshushya)\n5. Haritaki (Vatanulomana)\n6. Brahmi (Medhya)',
-    category: 'dravyaguna_formulation',
-    isPinned: true,
-    tags: ['Rasayana', 'Dravyaguna'],
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-    color: '#fef3c7', // soft amber
-  },
-  {
-    id: 'note-3',
-    title: 'Doctor Ravi 5-Year Vision',
-    content: 'Complete Final Proff -> 1-year Internship with excellence -> Crack AIAPGET -> Open flagship Ayurvedic wellness & clinic.',
-    category: 'personal_diary',
-    isPinned: false,
-    tags: ['LifeGoals', 'Career'],
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-    color: '#e0e7ff', // soft lavender
-  },
-  {
-    id: 'note-4',
-    title: 'Emergency Medical Kit Checklist',
-    content: 'Keep portable emergency kit ready for hospital casualty duty.',
-    category: 'general',
-    isPinned: false,
-    tags: ['Internship', 'Kit'],
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-    color: '#fce7f3', // soft rose
-    checklist: [
-      { id: 'k1', text: 'Stethoscope & BP Cuff', done: true },
-      { id: 'k2', text: 'Tourniquet & IV Cannula set', done: false },
-      { id: 'k3', text: 'Ayurvedic Sutshekhar Ras emergency tablets', done: true },
-    ],
-  },
-];
-
-// Seed Expenses (Cleared for manual user entry)
-export const defaultExpensesList: ExpenseRecord[] = [];
+// Apply one-time seed synchronization for the user's provided JSON snapshot so existing browser/APK storage reflects it immediately
+const USER_JSON_SEED_VERSION_KEY = 'ayurlife_user_json_seed_v2026_10_05_r2';
+let didApplyFreshUserJsonSeed = false;
+try {
+  if (typeof localStorage !== 'undefined' && !localStorage.getItem(USER_JSON_SEED_VERSION_KEY)) {
+    const seedSnapshot = {
+      milestones: defaultMilestones,
+      loans: defaultLoans,
+      investments: defaultInvestments,
+      expenses: defaultExpensesList,
+      notes: defaultKeepNotes,
+      tasks: defaultTasksList,
+      events: defaultEventsList,
+      notifications: defaultNotifications,
+      dinacharyaLogs: defaultDinacharyaLogs,
+      habits: defaultHabits,
+      journalEntries: defaultJournalEntries,
+      _seedVersion: USER_JSON_SEED_VERSION_KEY,
+      _savedAtTimestamp: Date.now() + 10000,
+    };
+    localStorage.setItem(STORAGE_KEYS.MILESTONES, JSON.stringify(defaultMilestones));
+    localStorage.setItem(STORAGE_KEYS.LOANS, JSON.stringify(defaultLoans));
+    localStorage.setItem(STORAGE_KEYS.INVESTMENTS, JSON.stringify(defaultInvestments));
+    localStorage.setItem(STORAGE_KEYS.EXPENSES, JSON.stringify(defaultExpensesList));
+    localStorage.setItem(STORAGE_KEYS.EXPENSES_HISTORY, JSON.stringify(defaultExpensesList));
+    localStorage.setItem(STORAGE_KEYS.NOTES, JSON.stringify(defaultKeepNotes));
+    localStorage.setItem(STORAGE_KEYS.CHECKLISTS, JSON.stringify(defaultTasksList));
+    localStorage.setItem(STORAGE_KEYS.EVENTS, JSON.stringify(defaultEventsList));
+    localStorage.setItem(STORAGE_KEYS.NOTIFICATIONS, JSON.stringify(defaultNotifications));
+    localStorage.setItem(STORAGE_KEYS.DINACHARYA, JSON.stringify(defaultDinacharyaLogs));
+    localStorage.setItem(STORAGE_KEYS.HABITS, JSON.stringify(defaultHabits));
+    localStorage.setItem(STORAGE_KEYS.JOURNAL, JSON.stringify(defaultJournalEntries));
+    localStorage.setItem('ayurlife_cloud_full_snapshot', JSON.stringify(seedSnapshot));
+    localStorage.setItem(USER_JSON_SEED_VERSION_KEY, 'applied');
+    didApplyFreshUserJsonSeed = true;
+  }
+} catch {}
 
 // Request permanent storage permission from browser / Android WebView so data is never evicted
 try {
@@ -560,6 +920,7 @@ export const autoSaveToCloud = (allData: Record<string, any>): void => {
   try {
     const payload = {
       ...allData,
+      _seedVersion: USER_JSON_SEED_VERSION_KEY,
       _savedAtTimestamp: Date.now(),
     };
     const serialized = JSON.stringify(payload);
@@ -575,12 +936,82 @@ export const autoSaveToCloud = (allData: Record<string, any>): void => {
 };
 
 /**
+ * Permanently archives and merges expenses across all months so previous months' expenses are never lost
+ */
+export const syncExpensesToMonthlyArchive = (currentExpenses: ExpenseRecord[]): ExpenseRecord[] => {
+  try {
+    const rawArchive = localStorage.getItem(STORAGE_KEYS.EXPENSES_HISTORY);
+    const archivedList: ExpenseRecord[] = rawArchive ? JSON.parse(rawArchive) : [];
+    const byId = new Map<string, ExpenseRecord>();
+    archivedList.forEach((item) => {
+      if (item && item.id) byId.set(item.id, item);
+    });
+    currentExpenses.forEach((item) => {
+      if (item && item.id) byId.set(item.id, item);
+    });
+    const merged = Array.from(byId.values()).sort((a, b) => b.date.localeCompare(a.date));
+    const serialized = JSON.stringify(merged);
+    localStorage.setItem(STORAGE_KEYS.EXPENSES_HISTORY, serialized);
+    writeToIDB(STORAGE_KEYS.EXPENSES_HISTORY, serialized);
+    return merged;
+  } catch {
+    return currentExpenses;
+  }
+};
+
+export const removeExpenseFromMonthlyArchive = (expenseId: string): void => {
+  try {
+    const rawArchive = localStorage.getItem(STORAGE_KEYS.EXPENSES_HISTORY);
+    if (!rawArchive) return;
+    const archivedList: ExpenseRecord[] = JSON.parse(rawArchive);
+    const filtered = archivedList.filter((e) => e.id !== expenseId);
+    const serialized = JSON.stringify(filtered);
+    localStorage.setItem(STORAGE_KEYS.EXPENSES_HISTORY, serialized);
+    writeToIDB(STORAGE_KEYS.EXPENSES_HISTORY, serialized);
+  } catch {}
+};
+
+export const clearAllMonthlyArchivedExpenses = (): void => {
+  try {
+    localStorage.setItem(STORAGE_KEYS.EXPENSES_HISTORY, '[]');
+    writeToIDB(STORAGE_KEYS.EXPENSES_HISTORY, '[]');
+  } catch {}
+};
+
+export const getAllArchivedAndCurrentExpenses = (currentExpenses?: ExpenseRecord[]): ExpenseRecord[] => {
+  try {
+    const active = currentExpenses ?? getStoredData<ExpenseRecord[]>(STORAGE_KEYS.EXPENSES, defaultExpensesList);
+    const rawArchive = localStorage.getItem(STORAGE_KEYS.EXPENSES_HISTORY);
+    const archived: ExpenseRecord[] = rawArchive ? JSON.parse(rawArchive) : [];
+    const byId = new Map<string, ExpenseRecord>();
+    archived.forEach((item) => {
+      if (item && item.id) byId.set(item.id, item);
+    });
+    active.forEach((item) => {
+      if (item && item.id) byId.set(item.id, item);
+    });
+    return Array.from(byId.values()).sort((a, b) => b.date.localeCompare(a.date));
+  } catch {
+    return currentExpenses || [];
+  }
+};
+
+/**
  * Hydrates state from IndexedDB if localStorage was cleared by an Android APK WebView restart
  */
 export const hydrateFromPersistentDB = async (
   onHydrated: (snapshot: Record<string, any>) => void
 ): Promise<void> => {
   try {
+    if (didApplyFreshUserJsonSeed) {
+      isIDBHydrationFinished = true;
+      const currentLs = localStorage.getItem('ayurlife_cloud_full_snapshot');
+      if (currentLs) {
+        await writeToIDB('ayurlife_cloud_full_snapshot', currentLs);
+      }
+      return;
+    }
+
     const idbSnapRaw = await readFromIDB('ayurlife_cloud_full_snapshot');
     if (!idbSnapRaw) {
       isIDBHydrationFinished = true;
@@ -593,6 +1024,16 @@ export const hydrateFromPersistentDB = async (
     const idbSnap = JSON.parse(idbSnapRaw);
     if (!idbSnap || typeof idbSnap !== 'object') {
       isIDBHydrationFinished = true;
+      return;
+    }
+
+    // Do not overwrite if IndexedDB snapshot is from an older seed version
+    if (idbSnap._seedVersion !== USER_JSON_SEED_VERSION_KEY) {
+      isIDBHydrationFinished = true;
+      const currentLs = localStorage.getItem('ayurlife_cloud_full_snapshot');
+      if (currentLs) {
+        writeToIDB('ayurlife_cloud_full_snapshot', currentLs);
+      }
       return;
     }
 

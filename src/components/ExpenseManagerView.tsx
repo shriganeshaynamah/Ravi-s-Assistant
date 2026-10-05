@@ -33,7 +33,16 @@ import {
   exportMultiSectionToGoogleSheets,
   exportExpensesToGoogleSheets,
   MASTER_SHEET_KEY,
+  getMasterSpreadsheetUrl,
+  getMonthly5thAutoSyncStatus,
+  checkAndRunMonthly5thSheetAutoSync,
 } from '../services/googleSheets';
+import {
+  getAllArchivedAndCurrentExpenses,
+  syncExpensesToMonthlyArchive,
+  removeExpenseFromMonthlyArchive,
+  clearAllMonthlyArchivedExpenses,
+} from '../services/storage';
 import { ConfirmationModal } from './ConfirmationModal';
 import type { User } from 'firebase/auth';
 
@@ -82,15 +91,21 @@ export const ExpenseManagerView: React.FC<ExpenseManagerViewProps> = ({
     }
   }, [initialTab]);
 
-  // Dates
+  // Dates & Current Month Info
   const today = new Date();
   const todayStr = today.toISOString().split('T')[0];
-  const thirtyDaysAgoStr = new Date(today.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+  const currentYearMonth = todayStr.slice(0, 7); // e.g. "2026-10"
+  const currentMonthName = today.toLocaleString('en-US', { month: 'long' }); // e.g. "October"
+  const currentMonthStartStr = `${currentYearMonth}-01`;
+  const currentMonthLastDay = new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate();
+  const currentMonthEndStr = `${currentYearMonth}-${String(currentMonthLastDay).padStart(2, '0')}`;
 
-  // Analysis State: Date range from calendar (flexible from 1 day to any previous date)
+  // Analysis State: Month or Date range from calendar (defaults to Current Month)
   const [isAnalysisOpen, setIsAnalysisOpen] = useState(false);
-  const [analysisStartDate, setAnalysisStartDate] = useState<string>(thirtyDaysAgoStr);
-  const [analysisEndDate, setAnalysisEndDate] = useState<string>(todayStr);
+  const [selectedAnalysisMonth, setSelectedAnalysisMonth] = useState<string>(currentYearMonth);
+  const [analysisStartDate, setAnalysisStartDate] = useState<string>(currentMonthStartStr);
+  const [analysisEndDate, setAnalysisEndDate] = useState<string>(currentMonthEndStr);
+  const [dailyViewFilter, setDailyViewFilter] = useState<'month' | 'today'>('month');
 
   // Loan 4:5 Slider & Repayment State
   const [selectedLoanId, setSelectedLoanId] = useState<string | null>(loans[0]?.id || null);
@@ -212,26 +227,112 @@ export const ExpenseManagerView: React.FC<ExpenseManagerViewProps> = ({
 
   // Google Sheets Export
   const [isExporting, setIsExporting] = useState(false);
-  const [exportedSheetUrl, setExportedSheetUrl] = useState<string | null>(null);
+  const [exportedSheetUrl, setExportedSheetUrl] = useState<string | null>(() => getMasterSpreadsheetUrl());
+  const [monthly5thStatus, setMonthly5thStatus] = useState(() => getMonthly5thAutoSyncStatus());
 
-  // Daily Expenses (Shows ONLY Today's transactions by default)
+  // Permanently sync current expenses into the multi-month archive and load all historical + current expenses
+  const allHistoricalAndCurrentExpenses = useMemo(() => {
+    syncExpensesToMonthlyArchive(expenses);
+    return getAllArchivedAndCurrentExpenses(expenses);
+  }, [expenses]);
+
+  // Auto-update to Google Sheet every 5th of the month
+  useEffect(() => {
+    checkAndRunMonthly5thSheetAutoSync({
+      expenses: allHistoricalAndCurrentExpenses,
+      investments,
+      loans,
+    }).then((res) => {
+      if (res.synced && res.spreadsheetUrl) {
+        setExportedSheetUrl(res.spreadsheetUrl);
+        setMonthly5thStatus(getMonthly5thAutoSyncStatus());
+      }
+    });
+  }, [allHistoricalAndCurrentExpenses, investments, loans]);
+
+  // Helper to select a specific month (YYYY-MM) for Expense Analysis
+  const handleSelectAnalysisMonth = (ym: string) => {
+    setSelectedAnalysisMonth(ym);
+    if (!ym || ym === 'all') {
+      setAnalysisStartDate('');
+      setAnalysisEndDate('');
+      return;
+    }
+    const [yStr, mStr] = ym.split('-');
+    const y = parseInt(yStr, 10);
+    const m = parseInt(mStr, 10);
+    if (!isNaN(y) && !isNaN(m)) {
+      const lastDay = new Date(y, m, 0).getDate();
+      setAnalysisStartDate(`${ym}-01`);
+      setAnalysisEndDate(`${ym}-${String(lastDay).padStart(2, '0')}`);
+    }
+  };
+
+  // Available months from stored + archived expenses (plus current & previous month options)
+  const availableAnalysisMonths = useMemo(() => {
+    const monthSet = new Set<string>();
+    monthSet.add(currentYearMonth);
+    const prevDate = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+    const prevYm = `${prevDate.getFullYear()}-${String(prevDate.getMonth() + 1).padStart(2, '0')}`;
+    monthSet.add(prevYm);
+    allHistoricalAndCurrentExpenses.forEach((e) => {
+      const ym = (e.date || '').slice(0, 7);
+      if (/^\d{4}-\d{2}$/.test(ym)) monthSet.add(ym);
+    });
+    const monthNames = [
+      'January',
+      'February',
+      'March',
+      'April',
+      'May',
+      'June',
+      'July',
+      'August',
+      'September',
+      'October',
+      'November',
+      'December',
+    ];
+    return Array.from(monthSet)
+      .sort((a, b) => b.localeCompare(a))
+      .map((ym) => {
+        const [y, m] = ym.split('-');
+        const label = `${monthNames[parseInt(m, 10) - 1] || m} ${y}`;
+        return { ym, label };
+      });
+  }, [allHistoricalAndCurrentExpenses, currentYearMonth]);
+
+  // Current Month Expenses & Metrics (Displayed on Daily Expense Page)
+  const currentMonthExpenses = useMemo(() => {
+    return allHistoricalAndCurrentExpenses.filter((e) => (e.date || '').startsWith(currentYearMonth));
+  }, [allHistoricalAndCurrentExpenses, currentYearMonth]);
+
+  const currentMonthInflow = useMemo(() => {
+    return currentMonthExpenses
+      .filter((e) => e.type === 'income')
+      .reduce((sum, e) => sum + e.amount, 0);
+  }, [currentMonthExpenses]);
+
+  const currentMonthOutflow = useMemo(() => {
+    return currentMonthExpenses
+      .filter((e) => e.type === 'expense')
+      .reduce((sum, e) => sum + e.amount, 0);
+  }, [currentMonthExpenses]);
+
+  const currentMonthBalance = currentMonthInflow - currentMonthOutflow;
+
+  // Today's Expenses
   const dailyExpenses = useMemo(() => {
-    return expenses.filter((e) => e.date === todayStr);
-  }, [expenses, todayStr]);
+    return allHistoricalAndCurrentExpenses.filter((e) => e.date === todayStr);
+  }, [allHistoricalAndCurrentExpenses, todayStr]);
 
-  const dailyInflow = useMemo(() => {
-    return dailyExpenses.filter((e) => e.type === 'income').reduce((sum, e) => sum + e.amount, 0);
-  }, [dailyExpenses]);
+  const displayedDailyTabExpenses = useMemo(() => {
+    return dailyViewFilter === 'month' ? currentMonthExpenses : dailyExpenses;
+  }, [dailyViewFilter, currentMonthExpenses, dailyExpenses]);
 
-  const dailyOutflow = useMemo(() => {
-    return dailyExpenses.filter((e) => e.type === 'expense').reduce((sum, e) => sum + e.amount, 0);
-  }, [dailyExpenses]);
-
-  const dailyNet = dailyInflow - dailyOutflow;
-
-  // Analysis Filtered Expenses based on custom Calendar Date Range
+  // Analysis Filtered Expenses based on selected Month or custom Calendar Date Range (searches across all stored & previous months' expenses)
   const analysisExpenses = useMemo(() => {
-    return expenses.filter((e) => {
+    return allHistoricalAndCurrentExpenses.filter((e) => {
       if (!analysisStartDate && !analysisEndDate) return true;
       if (analysisStartDate && analysisEndDate) {
         return e.date >= analysisStartDate && e.date <= analysisEndDate;
@@ -240,7 +341,7 @@ export const ExpenseManagerView: React.FC<ExpenseManagerViewProps> = ({
       if (analysisEndDate) return e.date <= analysisEndDate;
       return true;
     });
-  }, [expenses, analysisStartDate, analysisEndDate]);
+  }, [allHistoricalAndCurrentExpenses, analysisStartDate, analysisEndDate]);
 
   const analysisInflow = useMemo(() => {
     return analysisExpenses.filter((e) => e.type === 'income').reduce((sum, e) => sum + e.amount, 0);
@@ -309,31 +410,43 @@ export const ExpenseManagerView: React.FC<ExpenseManagerViewProps> = ({
     return { days, maxDayTotal, highestDay };
   }, [analysisExpenses]);
 
-  // 3. Monthly / Timeline Breakdown (Which month expense is more)
+  // 3. Monthly / Timeline Breakdown (Compares all stored months + selected range)
   const monthlyAnalysis = useMemo(() => {
-    const monthTotals: Record<string, number> = {};
+    const monthTotals: Record<string, { expense: number; income: number }> = {};
 
-    analysisExpenses
-      .filter((e) => e.type === 'expense')
-      .forEach((e) => {
-        const monthKey = e.date.substring(0, 7); // YYYY-MM
-        monthTotals[monthKey] = (monthTotals[monthKey] || 0) + e.amount;
-      });
+    allHistoricalAndCurrentExpenses.forEach((e) => {
+      const monthKey = (e.date || '').substring(0, 7); // YYYY-MM
+      if (!/^\d{4}-\d{2}$/.test(monthKey)) return;
+      if (!monthTotals[monthKey]) {
+        monthTotals[monthKey] = { expense: 0, income: 0 };
+      }
+      if (e.type === 'expense') {
+        monthTotals[monthKey].expense += e.amount;
+      } else {
+        monthTotals[monthKey].income += e.amount;
+      }
+    });
 
     const sortedMonths = Object.entries(monthTotals)
-      .sort((a, b) => a[0].localeCompare(b[0]))
-      .map(([monthKey, total]) => {
+      .sort((a, b) => b[0].localeCompare(a[0]))
+      .map(([monthKey, vals]) => {
         const [y, m] = monthKey.split('-');
         const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
         const label = `${monthNames[parseInt(m, 10) - 1]} ${y}`;
-        return { monthKey, label, total };
+        return {
+          monthKey,
+          label,
+          total: vals.expense,
+          income: vals.income,
+          balance: vals.income - vals.expense,
+        };
       });
 
     const maxMonthTotal = Math.max(1, ...sortedMonths.map((m) => m.total));
     const highestMonth = [...sortedMonths].sort((a, b) => b.total - a.total)[0];
 
     return { sortedMonths, maxMonthTotal, highestMonth };
-  }, [analysisExpenses]);
+  }, [allHistoricalAndCurrentExpenses]);
 
   // Calculate EMI
   const calculateEmi = (p: number, r: number, n: number) => {
@@ -413,11 +526,12 @@ export const ExpenseManagerView: React.FC<ExpenseManagerViewProps> = ({
     setIsExporting(true);
     try {
       const res = await exportMultiSectionToGoogleSheets({
-        expenses,
+        expenses: allHistoricalAndCurrentExpenses,
         investments,
         loans,
       });
       setExportedSheetUrl(res.spreadsheetUrl);
+      setMonthly5thStatus(getMonthly5thAutoSyncStatus());
     } catch (err: any) {
       console.error(err);
     } finally {
@@ -426,6 +540,7 @@ export const ExpenseManagerView: React.FC<ExpenseManagerViewProps> = ({
   };
 
   const handleConfirmClearAllExpenses = () => {
+    clearAllMonthlyArchivedExpenses();
     expenses.forEach((e) => onDeleteExpense(e.id));
     if (user && localStorage.getItem(MASTER_SHEET_KEY)) {
       exportMultiSectionToGoogleSheets({
@@ -968,19 +1083,53 @@ export const ExpenseManagerView: React.FC<ExpenseManagerViewProps> = ({
                 </button>
               </div>
 
-              {/* CALENDAR RANGE PICKER: User selects range from calendar (one day to any prev selected date) */}
-              <div className="p-3 rounded-2xl bg-purple-500/10 dark:bg-purple-950/30 border border-purple-500/20 space-y-2.5">
-                <div className="flex items-center justify-between">
+              {/* MONTH & CALENDAR RANGE PICKER: Analyze any selected month or custom date range */}
+              <div className="p-3 rounded-2xl bg-purple-500/10 dark:bg-purple-950/30 border border-purple-500/20 space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
                   <span className="text-[10px] uppercase font-bold text-purple-700 dark:text-purple-300 tracking-wider flex items-center gap-1">
                     <Calendar className="w-3.5 h-3.5" />
-                    <span>Select Calendar Date Range</span>
+                    <span>Select Month or Date Range for Analysis</span>
                   </span>
                   <span className="text-[10px] text-slate-600 dark:text-slate-300 font-mono font-bold">
-                    {analysisExpenses.length} records found
+                    {analysisExpenses.length} records in selected period
                   </span>
                 </div>
 
-                {/* Calendar Date Pickers */}
+                {/* Month Selector Row (Stored Previous Months + Month Picker) */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                  <div>
+                    <label className="text-[10px] text-slate-600 dark:text-slate-300 font-bold block mb-0.5">
+                      Select Stored Month
+                    </label>
+                    <select
+                      value={selectedAnalysisMonth}
+                      onChange={(e) => handleSelectAnalysisMonth(e.target.value)}
+                      className="w-full p-2 rounded-xl bg-white dark:bg-slate-800 border border-purple-300 dark:border-purple-500/40 text-slate-900 dark:text-white text-xs font-bold shadow-2xs"
+                    >
+                      {availableAnalysisMonths.map((m) => (
+                        <option key={m.ym} value={m.ym}>
+                          {m.label} {m.ym === currentYearMonth ? '(Current Month)' : ''}
+                        </option>
+                      ))}
+                      <option value="all">All Stored Months Combined</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-[10px] text-slate-600 dark:text-slate-300 font-bold block mb-0.5">
+                      Or Jump to Any Month (Calendar)
+                    </label>
+                    <input
+                      type="month"
+                      value={selectedAnalysisMonth === 'all' ? currentYearMonth : selectedAnalysisMonth}
+                      onChange={(e) => {
+                        if (e.target.value) handleSelectAnalysisMonth(e.target.value);
+                      }}
+                      className="w-full p-2 rounded-xl bg-white dark:bg-slate-800 border border-purple-300 dark:border-purple-500/40 text-slate-900 dark:text-white text-xs font-mono font-bold shadow-2xs"
+                    />
+                  </div>
+                </div>
+
+                {/* Custom Calendar Date Pickers */}
                 <div className="grid grid-cols-2 gap-2 text-xs">
                   <div>
                     <label className="text-[10px] text-slate-600 dark:text-slate-300 font-bold block mb-0.5">
@@ -989,7 +1138,10 @@ export const ExpenseManagerView: React.FC<ExpenseManagerViewProps> = ({
                     <input
                       type="date"
                       value={analysisStartDate}
-                      onChange={(e) => setAnalysisStartDate(e.target.value)}
+                      onChange={(e) => {
+                        setSelectedAnalysisMonth('custom');
+                        setAnalysisStartDate(e.target.value);
+                      }}
                       className="w-full p-2 rounded-xl bg-white dark:bg-slate-800 border border-purple-300 dark:border-purple-500/40 text-slate-900 dark:text-white text-xs font-mono font-bold shadow-2xs"
                     />
                   </div>
@@ -1000,16 +1152,40 @@ export const ExpenseManagerView: React.FC<ExpenseManagerViewProps> = ({
                     <input
                       type="date"
                       value={analysisEndDate}
-                      onChange={(e) => setAnalysisEndDate(e.target.value)}
+                      onChange={(e) => {
+                        setSelectedAnalysisMonth('custom');
+                        setAnalysisEndDate(e.target.value);
+                      }}
                       className="w-full p-2 rounded-xl bg-white dark:bg-slate-800 border border-purple-300 dark:border-purple-500/40 text-slate-900 dark:text-white text-xs font-mono font-bold shadow-2xs"
                     />
                   </div>
                 </div>
 
-                {/* Quick Presets: 1 Day (Today), 7 Days, 30 Days, This Year */}
+                {/* Quick Presets: Current Month, Previous Month, 1 Day (Today), 7 Days, 30 Days, All Time */}
                 <div className="flex flex-wrap gap-1.5 pt-1">
                   <button
+                    onClick={() => handleSelectAnalysisMonth(currentYearMonth)}
+                    className={`px-2.5 py-1 rounded-lg text-[10px] font-bold cursor-pointer transition-colors shadow-2xs ${
+                      selectedAnalysisMonth === currentYearMonth
+                        ? 'bg-purple-600 text-white'
+                        : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border border-purple-200 dark:border-slate-700 hover:bg-purple-50 dark:hover:bg-slate-700'
+                    }`}
+                  >
+                    {currentMonthName} (This Month)
+                  </button>
+                  <button
                     onClick={() => {
+                      const prevDate = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+                      const prevYm = `${prevDate.getFullYear()}-${String(prevDate.getMonth() + 1).padStart(2, '0')}`;
+                      handleSelectAnalysisMonth(prevYm);
+                    }}
+                    className="px-2.5 py-1 rounded-lg text-[10px] font-bold bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border border-purple-200 dark:border-slate-700 hover:bg-purple-50 dark:hover:bg-slate-700 cursor-pointer shadow-2xs"
+                  >
+                    Previous Month
+                  </button>
+                  <button
+                    onClick={() => {
+                      setSelectedAnalysisMonth('custom');
                       setAnalysisStartDate(todayStr);
                       setAnalysisEndDate(todayStr);
                     }}
@@ -1022,27 +1198,48 @@ export const ExpenseManagerView: React.FC<ExpenseManagerViewProps> = ({
                     1 Day (Today)
                   </button>
                   <button
-                    onClick={() => setRangePreset(7)}
+                    onClick={() => {
+                      setSelectedAnalysisMonth('custom');
+                      setRangePreset(7);
+                    }}
                     className="px-2.5 py-1 rounded-lg text-[10px] font-bold bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border border-purple-200 dark:border-slate-700 hover:bg-purple-50 dark:hover:bg-slate-700 cursor-pointer shadow-2xs"
                   >
                     Last 7 Days
                   </button>
                   <button
-                    onClick={() => setRangePreset(30)}
+                    onClick={() => {
+                      setSelectedAnalysisMonth('custom');
+                      setRangePreset(30);
+                    }}
                     className="px-2.5 py-1 rounded-lg text-[10px] font-bold bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border border-purple-200 dark:border-slate-700 hover:bg-purple-50 dark:hover:bg-slate-700 cursor-pointer shadow-2xs"
                   >
                     Last 30 Days
                   </button>
                   <button
-                    onClick={() => {
-                      const y = today.getFullYear();
-                      setAnalysisStartDate(`${y}-01-01`);
-                      setAnalysisEndDate(todayStr);
-                    }}
-                    className="px-2.5 py-1 rounded-lg text-[10px] font-bold bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border border-purple-200 dark:border-slate-700 hover:bg-purple-50 dark:hover:bg-slate-700 cursor-pointer shadow-2xs"
+                    onClick={() => handleSelectAnalysisMonth('all')}
+                    className={`px-2.5 py-1 rounded-lg text-[10px] font-bold cursor-pointer transition-colors shadow-2xs ${
+                      selectedAnalysisMonth === 'all'
+                        ? 'bg-purple-600 text-white'
+                        : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border border-purple-200 dark:border-slate-700 hover:bg-purple-50 dark:hover:bg-slate-700'
+                    }`}
                   >
-                    This Year
+                    All Months Archive
                   </button>
+                </div>
+
+                {/* Auto-Update Every 5th of Month Info Banner */}
+                <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-purple-200/60 dark:border-purple-800/40 text-[10px]">
+                  <span className="text-purple-800 dark:text-purple-300 font-semibold flex items-center gap-1">
+                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                    <span>
+                      All previous months’ expenses are permanently stored &amp; auto-updated to the same Master Google Sheet every 5th of the month.
+                    </span>
+                  </span>
+                  <span className="font-mono font-bold text-slate-600 dark:text-slate-400">
+                    {monthly5thStatus.isCurrentMonthSynced
+                      ? `Synced for ${monthly5thStatus.lastSyncedMonth}`
+                      : `Next Auto-Sync: ${monthly5thStatus.nextSyncLabel}`}
+                  </span>
                 </div>
               </div>
 
@@ -1223,14 +1420,27 @@ export const ExpenseManagerView: React.FC<ExpenseManagerViewProps> = ({
                       const isHighest = m.total === monthlyAnalysis.highestMonth?.total;
 
                       return (
-                        <div key={m.monthKey} className="space-y-1">
+                        <div
+                          key={m.monthKey}
+                          onClick={() => handleSelectAnalysisMonth(m.monthKey)}
+                          className="space-y-1 cursor-pointer p-1.5 rounded-xl hover:bg-white/60 dark:hover:bg-slate-700/40 transition-colors"
+                          title={`Click to analyze ${m.label}`}
+                        >
                           <div className="flex items-center justify-between text-[11px]">
                             <span className={`font-bold ${isHighest ? 'text-indigo-700 dark:text-indigo-300 font-extrabold' : 'text-slate-800 dark:text-slate-200'}`}>
                               {m.label} {isHighest && '★ Peak Month'}
                             </span>
-                            <span className="font-mono font-bold text-slate-900 dark:text-white">
-                              ₹{m.total.toLocaleString('en-IN')}
-                            </span>
+                            <div className="flex items-center gap-2 font-mono text-[10px]">
+                              <span className="text-emerald-700 dark:text-emerald-400 font-bold">
+                                +₹{m.income.toLocaleString('en-IN')}
+                              </span>
+                              <span className="font-bold text-rose-700 dark:text-rose-400">
+                                -₹{m.total.toLocaleString('en-IN')}
+                              </span>
+                              <span className="font-bold text-slate-900 dark:text-white">
+                                Bal: ₹{m.balance.toLocaleString('en-IN')}
+                              </span>
+                            </div>
                           </div>
                           <div className="w-full h-2 rounded-full bg-slate-200 dark:bg-slate-700 overflow-hidden">
                             <div
@@ -1246,52 +1456,120 @@ export const ExpenseManagerView: React.FC<ExpenseManagerViewProps> = ({
                   </div>
                 )}
               </div>
+
+              {/* 4. TRANSACTIONS MADE DURING SELECTED RANGE / MONTH */}
+              <div className="space-y-2.5 pt-2 border-t border-slate-200 dark:border-slate-800">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] uppercase font-bold text-slate-600 dark:text-slate-300 tracking-wider">
+                    4. Transactions in Selected Range / Month ({analysisExpenses.length})
+                  </span>
+                  <span className="text-[10px] font-mono text-purple-700 dark:text-purple-300 font-bold">
+                    {analysisStartDate || 'Start'} → {analysisEndDate || 'Now'}
+                  </span>
+                </div>
+
+                {analysisExpenses.length === 0 ? (
+                  <p className="text-xs text-slate-500 dark:text-slate-400 italic text-center py-2">
+                    No transactions recorded during this selected month/range.
+                  </p>
+                ) : (
+                  <div className="space-y-1.5 max-h-60 overflow-y-auto pr-1">
+                    {analysisExpenses.map((item) => (
+                      <div
+                        key={item.id}
+                        className="p-2.5 rounded-xl bg-white/90 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700/70 flex items-center justify-between gap-2 text-xs"
+                      >
+                        <div className="min-w-0">
+                          <p className="font-bold text-slate-900 dark:text-white truncate">{item.description}</p>
+                          <p className="text-[10px] text-slate-500 dark:text-slate-400 font-mono">
+                            {item.date} • {item.category.replace(/_/g, ' ')} • {item.paymentMode.toUpperCase()}
+                          </p>
+                        </div>
+                        <span
+                          className={`font-mono font-black shrink-0 ${
+                            item.type === 'income'
+                              ? 'text-emerald-700 dark:text-emerald-400'
+                              : 'text-rose-700 dark:text-rose-400'
+                          }`}
+                        >
+                          {item.type === 'income' ? '+' : '-'}₹{item.amount.toLocaleString('en-IN')}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
           )}
 
-          {/* Daily Pulse Cards & Today's Transactions (Hidden when in Analysis section) */}
+          {/* Current Month Summary Cards & Transactions (Hidden when in Analysis section) */}
           {!isAnalysisOpen && (
             <>
-              {/* Daily Pulse Cards (Shows Today's Metrics) */}
+              {/* Current (Name) Month Inflow, Outflow & Total Balance Cards */}
               <div className="grid grid-cols-3 gap-2 text-xs">
                 <div className="p-2.5 rounded-2xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800/60 text-center">
-                  <span className="text-[10px] text-slate-600 dark:text-slate-300 uppercase font-bold">
-                    Today Inflow
+                  <span className="text-[10px] text-slate-600 dark:text-slate-300 uppercase font-bold block truncate">
+                    {currentMonthName} Inflow
                   </span>
                   <p className="text-sm font-black text-emerald-700 dark:text-emerald-400 font-mono mt-0.5">
-                    ₹{dailyInflow.toLocaleString('en-IN')}
+                    ₹{currentMonthInflow.toLocaleString('en-IN')}
                   </p>
                 </div>
                 <div className="p-2.5 rounded-2xl bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-800/60 text-center">
-                  <span className="text-[10px] text-slate-600 dark:text-slate-300 uppercase font-bold">
-                    Today Outflow
+                  <span className="text-[10px] text-slate-600 dark:text-slate-300 uppercase font-bold block truncate">
+                    {currentMonthName} Outflow
                   </span>
                   <p className="text-sm font-black text-rose-700 dark:text-rose-400 font-mono mt-0.5">
-                    ₹{dailyOutflow.toLocaleString('en-IN')}
+                    ₹{currentMonthOutflow.toLocaleString('en-IN')}
                   </p>
                 </div>
                 <div className="p-2.5 rounded-2xl bg-sky-50 dark:bg-slate-800/80 border border-sky-200 dark:border-slate-700 text-center">
-                  <span className="text-[10px] text-slate-600 dark:text-slate-300 uppercase font-bold">
-                    Today Balance
+                  <span className="text-[10px] text-slate-600 dark:text-slate-300 uppercase font-bold block truncate">
+                    Total Balance
                   </span>
                   <p
                     className={`text-sm font-black font-mono mt-0.5 ${
-                      dailyNet >= 0 ? 'text-emerald-700 dark:text-emerald-400' : 'text-rose-700 dark:text-rose-400'
+                      currentMonthBalance >= 0
+                        ? 'text-emerald-700 dark:text-emerald-400'
+                        : 'text-rose-700 dark:text-rose-400'
                     }`}
                   >
-                    ₹{dailyNet.toLocaleString('en-IN')}
+                    ₹{currentMonthBalance.toLocaleString('en-IN')}
                   </p>
                 </div>
               </div>
 
-              {/* Today's Transactions List */}
+              {/* Current Month / Today Transactions List */}
               <div className="space-y-2">
                 <div className="flex items-center justify-between text-xs font-bold text-slate-700 dark:text-slate-300 px-1">
-                  <span>Today's Transactions ({dailyExpenses.length})</span>
-                  <span className="font-mono text-[10px] text-slate-500 dark:text-slate-400">{todayStr}</span>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      onClick={() => setDailyViewFilter('month')}
+                      className={`px-2.5 py-1 rounded-lg text-[10px] font-bold cursor-pointer transition-colors ${
+                        dailyViewFilter === 'month'
+                          ? 'bg-emerald-600 text-white'
+                          : 'bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-400'
+                      }`}
+                    >
+                      {currentMonthName} ({currentMonthExpenses.length})
+                    </button>
+                    <button
+                      onClick={() => setDailyViewFilter('today')}
+                      className={`px-2.5 py-1 rounded-lg text-[10px] font-bold cursor-pointer transition-colors ${
+                        dailyViewFilter === 'today'
+                          ? 'bg-emerald-600 text-white'
+                          : 'bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-400'
+                      }`}
+                    >
+                      Today ({dailyExpenses.length})
+                    </button>
+                  </div>
+                  <span className="font-mono text-[10px] text-slate-500 dark:text-slate-400">
+                    {dailyViewFilter === 'month' ? currentYearMonth : todayStr}
+                  </span>
                 </div>
 
-                {dailyExpenses.map((e) => (
+                {displayedDailyTabExpenses.map((e) => (
                   <div
                     key={e.id}
                     className={`p-3 rounded-2xl border flex items-center justify-between gap-3 text-xs ${
@@ -1309,9 +1587,16 @@ export const ExpenseManagerView: React.FC<ExpenseManagerViewProps> = ({
                         {e.type === 'income' ? <ArrowDownLeft className="w-4 h-4" /> : <ArrowUpRight className="w-4 h-4" />}
                       </div>
                       <div className="min-w-0">
-                        <p className="font-bold text-slate-900 dark:text-white truncate">{e.description}</p>
-                        <p className="text-[10px] text-slate-600 dark:text-slate-400 capitalize">
-                          {e.type === 'expense' ? e.category.replace('_', ' ') + ' • ' : ''}{e.paymentMode.toUpperCase()}
+                        <div className="flex items-center gap-1.5">
+                          <p className="font-bold text-slate-900 dark:text-white truncate">{e.description}</p>
+                          {e.date === todayStr && (
+                            <span className="text-[8px] font-black uppercase px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 shrink-0">
+                              Today
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-[10px] text-slate-600 dark:text-slate-400 capitalize font-mono">
+                          {e.date} • {e.type === 'expense' ? e.category.replace('_', ' ') + ' • ' : ''}{e.paymentMode.toUpperCase()}
                         </p>
                       </div>
                     </div>
@@ -1336,9 +1621,9 @@ export const ExpenseManagerView: React.FC<ExpenseManagerViewProps> = ({
                   </div>
                 ))}
 
-                {dailyExpenses.length === 0 && (
+                {displayedDailyTabExpenses.length === 0 && (
                   <div className="text-center py-7 text-slate-500 dark:text-slate-400 text-xs rounded-2xl border border-dashed border-slate-300 dark:border-slate-800">
-                    No transactions recorded yet today. Click "+ Add Entry" to record daily spending.
+                    No transactions recorded yet for {dailyViewFilter === 'month' ? currentMonthName : 'today'}. Click "+ Add Entry" to record spending or inflow.
                   </div>
                 )}
               </div>
@@ -3186,7 +3471,8 @@ export const ExpenseManagerView: React.FC<ExpenseManagerViewProps> = ({
         confirmLabel="Delete"
         onConfirm={() => {
           if (expenseToDelete) {
-            const nextExpenses = expenses.filter((e) => e.id !== expenseToDelete.id);
+            removeExpenseFromMonthlyArchive(expenseToDelete.id);
+            const nextExpenses = allHistoricalAndCurrentExpenses.filter((e) => e.id !== expenseToDelete.id);
             onDeleteExpense(expenseToDelete.id);
             if (user && localStorage.getItem(MASTER_SHEET_KEY)) {
               exportMultiSectionToGoogleSheets({

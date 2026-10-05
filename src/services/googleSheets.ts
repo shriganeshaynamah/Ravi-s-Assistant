@@ -1,4 +1,19 @@
-import { getAccessToken } from './firebase';
+import { getAccessToken, TOKEN_STORAGE_KEY } from './firebase';
+import {
+  getStoredData,
+  STORAGE_KEYS,
+  writeToIDB,
+  readFromIDB,
+  getAllArchivedAndCurrentExpenses,
+  defaultLoans,
+  defaultInvestments,
+  defaultHabits,
+  defaultDinacharyaLogs,
+  defaultKeepNotes,
+  defaultTasksList,
+  defaultEventsList,
+  defaultJournalEntries,
+} from './storage';
 import type {
   ExpenseRecord,
   LoanItem,
@@ -13,6 +28,27 @@ import type {
 
 export const MASTER_SHEET_KEY = 'ayurlife_master_spreadsheet_id';
 
+export const getMasterSpreadsheetUrl = (): string | null => {
+  try {
+    const id = localStorage.getItem(MASTER_SHEET_KEY);
+    return id ? `https://docs.google.com/spreadsheets/d/${id}/edit` : null;
+  } catch {
+    return null;
+  }
+};
+
+export const setCustomMasterSheetId = (idOrUrl: string): string | null => {
+  const trimmed = idOrUrl.trim();
+  if (!trimmed) return null;
+  const match = trimmed.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+  const extractedId = match ? match[1] : trimmed;
+  try {
+    localStorage.setItem(MASTER_SHEET_KEY, extractedId);
+    writeToIDB(MASTER_SHEET_KEY, extractedId);
+  } catch {}
+  return extractedId;
+};
+
 export interface MultiSectionSheetData {
   expenses?: ExpenseRecord[];
   investments?: InvestmentItem[];
@@ -25,19 +61,75 @@ export interface MultiSectionSheetData {
   journalEntries?: JournalEntry[];
 }
 
+const MONTH_SHORT_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+const formatMonthTabTitle = (ym: string): string => {
+  const [y, m] = ym.split('-');
+  const mIdx = parseInt(m, 10) - 1;
+  const mName = MONTH_SHORT_NAMES[mIdx] || m;
+  return `Expenses - ${mName} ${y}`;
+};
+
 /**
- * Gets or creates the Master Google Sheet with dedicated pages (tabs) for each section.
- * Whenever synced, it clears prior data ranges so any item deleted on the website is completely erased on the sheet.
- * Includes a dedicated "📊 Executive Analysis" page with summary metrics & chart visualizers.
+ * Gets or creates the SINGLE Master Google Sheet with dedicated pages (tabs) for each section
+ * plus monthly expense pages inside the same spreadsheet when needed.
+ * Always updates the SAME sheet instead of creating duplicate sheets.
  */
 export const exportMultiSectionToGoogleSheets = async (
-  data: MultiSectionSheetData,
+  data: MultiSectionSheetData = {},
   customTitle: string = 'Dr. Ravi Shankar - LifeOS Master Ledger & Analysis'
 ): Promise<{ spreadsheetId: string; spreadsheetUrl: string }> => {
   const token = await getAccessToken();
   if (!token) throw new Error('Not authenticated with Google Workspace');
 
-  const sectionPages = [
+  // Merge provided data with stored data so exporting from any tab updates & preserves ALL info in the same sheet
+  const expensesList = getAllArchivedAndCurrentExpenses(data.expenses);
+  const investmentsList =
+    data.investments !== undefined
+      ? data.investments
+      : getStoredData<InvestmentItem[]>(STORAGE_KEYS.INVESTMENTS, defaultInvestments);
+  const loansList =
+    data.loans !== undefined
+      ? data.loans
+      : getStoredData<LoanItem[]>(STORAGE_KEYS.LOANS, defaultLoans);
+  const habitsList =
+    data.habits !== undefined
+      ? data.habits
+      : getStoredData<HabitItem[]>(STORAGE_KEYS.HABITS, defaultHabits);
+  const dinacharyaList =
+    data.dinacharyaLogs !== undefined
+      ? data.dinacharyaLogs
+      : getStoredData<DinacharyaLog[]>(STORAGE_KEYS.DINACHARYA, defaultDinacharyaLogs);
+  const tasksList =
+    data.tasks !== undefined
+      ? data.tasks
+      : getStoredData<ChecklistTask[]>(STORAGE_KEYS.CHECKLISTS, defaultTasksList);
+  const notesList =
+    data.notes !== undefined
+      ? data.notes
+      : getStoredData<NoteItem[]>(STORAGE_KEYS.NOTES, defaultKeepNotes);
+  const eventsList =
+    data.events !== undefined
+      ? data.events
+      : getStoredData<CalendarEvent[]>(STORAGE_KEYS.EVENTS, defaultEventsList);
+  const journalList =
+    data.journalEntries !== undefined
+      ? data.journalEntries
+      : getStoredData<JournalEntry[]>(STORAGE_KEYS.JOURNAL, defaultJournalEntries);
+
+  // Group expenses by month (YYYY-MM) so we can also create/update dedicated monthly pages inside the same sheet
+  const expensesByMonth: Record<string, ExpenseRecord[]> = {};
+  expensesList.forEach((exp) => {
+    const ym = (exp.date || '').slice(0, 7);
+    if (/^\d{4}-\d{2}$/.test(ym)) {
+      if (!expensesByMonth[ym]) expensesByMonth[ym] = [];
+      expensesByMonth[ym].push(exp);
+    }
+  });
+  const sortedExpenseMonths = Object.keys(expensesByMonth).sort((a, b) => b.localeCompare(a));
+  const monthlyExpensePageTitles = sortedExpenseMonths.map(formatMonthTabTitle);
+
+  const coreSectionPages = [
     '📊 Executive Analysis',
     'Daily Expenses',
     'Investments',
@@ -49,14 +141,24 @@ export const exportMultiSectionToGoogleSheets = async (
     'Personal Diary',
   ];
 
-  let spreadsheetId = localStorage.getItem(MASTER_SHEET_KEY);
-  let existingSheets: { id: number; title: string }[] = [];
+  const sectionPages = [...coreSectionPages, ...monthlyExpensePageTitles];
 
-  // Check if saved spreadsheet exists and is accessible
+  // 1. Resolve saved spreadsheetId from localStorage or IndexedDB
+  let spreadsheetId = localStorage.getItem(MASTER_SHEET_KEY);
+  if (!spreadsheetId) {
+    spreadsheetId = await readFromIDB(MASTER_SHEET_KEY);
+    if (spreadsheetId) {
+      localStorage.setItem(MASTER_SHEET_KEY, spreadsheetId);
+    }
+  }
+
+  let existingSheets: { id: number; title: string; charts?: any[] }[] = [];
+
+  // 2. Check if saved spreadsheet exists and is accessible
   if (spreadsheetId) {
     try {
       const checkResp = await fetch(
-        `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}?fields=spreadsheetId,sheets.properties(sheetId,title)`,
+        `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}?includeGridData=false`,
         {
           headers: {
             Authorization: `Bearer ${token}`,
@@ -69,16 +171,62 @@ export const exportMultiSectionToGoogleSheets = async (
         existingSheets = (sheetInfo.sheets || []).map((s: any) => ({
           id: s.properties?.sheetId,
           title: s.properties?.title || '',
+          charts: s.charts || [],
         }));
-      } else {
+      } else if (checkResp.status === 404) {
         spreadsheetId = null;
       }
     } catch {
-      spreadsheetId = null;
+      // Do not clear spreadsheetId on transient network issues
     }
   }
 
-  // If no valid spreadsheet exists, create a new one with all section tabs
+  // 3. If spreadsheetId is still not known locally, search Google Drive for existing Master Sheet so we NEVER create a duplicate
+  if (!spreadsheetId) {
+    try {
+      const query = encodeURIComponent(
+        "mimeType = 'application/vnd.google-apps.spreadsheet' and (name contains 'LifeOS' or name contains 'Dr. Ravi Shankar') and trashed = false"
+      );
+      const searchResp = await fetch(
+        `https://www.googleapis.com/drive/v3/files?q=${query}&orderBy=modifiedTime desc&fields=files(id,name)`,
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        }
+      );
+      if (searchResp.ok) {
+        const searchData = await searchResp.json();
+        const foundFile = (searchData.files || [])[0];
+        if (foundFile && foundFile.id) {
+          spreadsheetId = foundFile.id;
+          localStorage.setItem(MASTER_SHEET_KEY, foundFile.id);
+          writeToIDB(MASTER_SHEET_KEY, foundFile.id);
+
+          const metaResp = await fetch(
+            `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}?includeGridData=false`,
+            {
+              headers: {
+                Authorization: `Bearer ${token}`,
+              },
+            }
+          );
+          if (metaResp.ok) {
+            const sheetInfo = await metaResp.json();
+            existingSheets = (sheetInfo.sheets || []).map((s: any) => ({
+              id: s.properties?.sheetId,
+              title: s.properties?.title || '',
+              charts: s.charts || [],
+            }));
+          }
+        }
+      }
+    } catch {
+      // Fallback to creation if Drive search fails
+    }
+  }
+
+  // 4. Only if no spreadsheet exists at all, create the single Master Spreadsheet
   if (!spreadsheetId) {
     const createResp = await fetch('https://sheets.googleapis.com/v4/spreadsheets', {
       method: 'POST',
@@ -113,12 +261,14 @@ export const exportMultiSectionToGoogleSheets = async (
     existingSheets = (createdData.sheets || []).map((s: any) => ({
       id: s.properties?.sheetId,
       title: s.properties?.title || '',
+      charts: s.charts || [],
     }));
     if (spreadsheetId) {
       localStorage.setItem(MASTER_SHEET_KEY, spreadsheetId);
+      writeToIDB(MASTER_SHEET_KEY, spreadsheetId);
     }
   } else {
-    // Add any missing section pages/tabs to the existing spreadsheet
+    // Add any missing section pages or new monthly expense pages to the SAME existing spreadsheet
     const existingTitles = existingSheets.map((s) => s.title);
     const missingPages = sectionPages.filter((p) => !existingTitles.includes(p));
     if (missingPages.length > 0) {
@@ -155,6 +305,7 @@ export const exportMultiSectionToGoogleSheets = async (
             existingSheets.push({
               id: reply.addSheet.properties.sheetId,
               title: reply.addSheet.properties.title,
+              charts: [],
             });
           }
         });
@@ -166,8 +317,11 @@ export const exportMultiSectionToGoogleSheets = async (
     throw new Error('Could not obtain Google Spreadsheet ID');
   }
 
-  // ================= STEP 1: ERASE / CLEAR PRIOR DATA =================
-  // This satisfies: "when user delete anything on website then it also erase on sheet"
+  // Ensure spreadsheetId is persisted in both localStorage and IndexedDB
+  localStorage.setItem(MASTER_SHEET_KEY, spreadsheetId);
+  writeToIDB(MASTER_SHEET_KEY, spreadsheetId);
+
+  // ================= STEP 1: ERASE / CLEAR PRIOR DATA IN EXISTING PAGES =================
   const clearRanges = sectionPages.map((title) => `'${title}'!A1:Z5000`);
   try {
     await fetch(
@@ -189,13 +343,6 @@ export const exportMultiSectionToGoogleSheets = async (
 
   // ================= STEP 2: PREPARE VALUES FOR EACH SECTION =================
   const writeDataPayload: { range: string; majorDimension: string; values: any[][] }[] = [];
-
-  // CALCULATIONS FOR ANALYSIS PAGE
-  const expensesList = data.expenses || [];
-  const investmentsList = data.investments || [];
-  const loansList = data.loans || [];
-  const habitsList = data.habits || [];
-  const dinacharyaList = data.dinacharyaLogs || [];
 
   const totalExpense = expensesList
     .filter((e) => e.type === 'expense')
@@ -296,6 +443,17 @@ export const exportMultiSectionToGoogleSheets = async (
     ['Ushnodaka Warm Water Intake', `${ushapanRate}%`, '90%+', 'OPTIMAL AGNI'],
     ['Vyayama & Pranayama Practice', `${vyayamaRate}%`, '75%+', 'STABLE PRANA'],
     ['Nidra (Sleep Quality Rating)', `${avgSleep} / 5`, '4.0+', 'SATTVIC REST'],
+    ['', '', '', ''],
+    ['SECTION 5: MONTHLY EXPENSE HISTORY ARCHIVE (ALL MONTHS)', '', '', ''],
+    ['Month', 'Month Inflow (₹)', 'Month Outflow (₹)', 'Total Balance (₹)'],
+    ...(sortedExpenseMonths.length > 0
+      ? sortedExpenseMonths.map((ym) => {
+          const mItems = expensesByMonth[ym] || [];
+          const mIn = mItems.filter((e) => e.type === 'income').reduce((s, e) => s + (e.amount || 0), 0);
+          const mOut = mItems.filter((e) => e.type === 'expense').reduce((s, e) => s + (e.amount || 0), 0);
+          return [formatMonthTabTitle(ym).replace('Expenses - ', ''), mIn, mOut, mIn - mOut];
+        })
+      : [['No monthly history yet', 0, 0, 0]]),
   ];
 
   writeDataPayload.push({
@@ -304,9 +462,10 @@ export const exportMultiSectionToGoogleSheets = async (
     values: analysisRows,
   });
 
-  // 2. PAGE: Daily Expenses
+  // 2. PAGE: Daily Expenses (All Months Combined + Monthly Pages in Same Sheet)
   const expenseHeaders = [
     'Date',
+    'Month',
     'Type (Expense/Income)',
     'Category',
     'Amount (₹)',
@@ -316,8 +475,10 @@ export const exportMultiSectionToGoogleSheets = async (
   const expenseRows: any[][] = [];
   if (expensesList.length > 0) {
     expensesList.forEach((item) => {
+      const ym = (item.date || '').slice(0, 7);
       expenseRows.push([
         item.date,
+        ym,
         item.type.toUpperCase(),
         item.category.replace(/_/g, ' ').toUpperCase(),
         item.amount,
@@ -330,6 +491,7 @@ export const exportMultiSectionToGoogleSheets = async (
       '—',
       '—',
       '—',
+      '—',
       0,
       '—',
       '[No active expenses recorded. All cleared / Add new on website.]',
@@ -339,6 +501,60 @@ export const exportMultiSectionToGoogleSheets = async (
     range: "'Daily Expenses'!A1",
     majorDimension: 'ROWS',
     values: [expenseHeaders, ...expenseRows],
+  });
+
+  // 2B. MONTHLY EXPENSE PAGES IN THE SAME SPREADSHEET (e.g. "Expenses - Oct 2026")
+  sortedExpenseMonths.forEach((ym) => {
+    const pageTitle = formatMonthTabTitle(ym);
+    const monthItems = expensesByMonth[ym] || [];
+    const mInflow = monthItems
+      .filter((e) => e.type === 'income')
+      .reduce((s, e) => s + (e.amount || 0), 0);
+    const mOutflow = monthItems
+      .filter((e) => e.type === 'expense')
+      .reduce((s, e) => s + (e.amount || 0), 0);
+    const mBalance = mInflow - mOutflow;
+
+    const catTotals: Record<string, number> = {};
+    monthItems
+      .filter((e) => e.type === 'expense')
+      .forEach((e) => {
+        catTotals[e.category] = (catTotals[e.category] || 0) + (e.amount || 0);
+      });
+
+    const catSummaryRows = Object.entries(catTotals)
+      .sort((a, b) => b[1] - a[1])
+      .map(([cat, amt]) => [
+        cat.replace(/_/g, ' ').toUpperCase(),
+        amt,
+        mOutflow > 0 ? `${Math.round((amt / mOutflow) * 100)}%` : '0%',
+      ]);
+
+    const monthSheetRows: any[][] = [
+      [`${pageTitle.toUpperCase()} - MONTHLY FINANCIAL LEDGER & ANALYSIS`, '', '', '', '', ''],
+      ['Month Inflow (₹)', mInflow, 'Month Outflow (₹)', mOutflow, 'Total Balance (₹)', mBalance],
+      ['', '', '', '', '', ''],
+      ['CATEGORY-WISE EXPENSE ANALYSIS', 'Amount (₹)', 'Share %', '', '', ''],
+      ...(catSummaryRows.length > 0
+        ? catSummaryRows.map((r) => [r[0], r[1], r[2], '', '', ''])
+        : [['No expenses in this month', 0, '0%', '', '', '']]),
+      ['', '', '', '', '', ''],
+      ['Date', 'Type', 'Category', 'Amount (₹)', 'Payment Mode', 'Description'],
+      ...monthItems.map((item) => [
+        item.date,
+        item.type.toUpperCase(),
+        item.category.replace(/_/g, ' ').toUpperCase(),
+        item.amount,
+        item.paymentMode.toUpperCase(),
+        item.description,
+      ]),
+    ];
+
+    writeDataPayload.push({
+      range: `'${pageTitle}'!A1`,
+      majorDimension: 'ROWS',
+      values: monthSheetRows,
+    });
   });
 
   // 3. PAGE: Investments
@@ -580,8 +796,8 @@ export const exportMultiSectionToGoogleSheets = async (
     'Details / Checklist',
   ];
   const todoRows: any[][] = [];
-  if (data.tasks && data.tasks.length > 0) {
-    data.tasks.forEach((t) => {
+  if (tasksList && tasksList.length > 0) {
+    tasksList.forEach((t) => {
       todoRows.push([
         'TO-DO TASK',
         t.text,
@@ -594,8 +810,8 @@ export const exportMultiSectionToGoogleSheets = async (
       ]);
     });
   }
-  if (data.notes && data.notes.length > 0) {
-    data.notes.forEach((n) => {
+  if (notesList && notesList.length > 0) {
+    notesList.forEach((n) => {
       const checklistText = (n.checklist || [])
         .map((c) => `[${c.done ? 'x' : ' '}] ${c.text}`)
         .join('; ');
@@ -632,8 +848,8 @@ export const exportMultiSectionToGoogleSheets = async (
     'Description / Notes',
   ];
   const eventRows: any[][] = [];
-  if (data.events && data.events.length > 0) {
-    data.events.forEach((evt) => {
+  if (eventsList && eventsList.length > 0) {
+    eventsList.forEach((evt) => {
       eventRows.push([
         evt.title,
         evt.category.toUpperCase(),
@@ -667,8 +883,8 @@ export const exportMultiSectionToGoogleSheets = async (
     'Tags',
   ];
   const diaryRows: any[][] = [];
-  if (data.journalEntries && data.journalEntries.length > 0) {
-    data.journalEntries.forEach((j) => {
+  if (journalList && journalList.length > 0) {
+    journalList.forEach((j) => {
       diaryRows.push([
         j.date,
         j.time || '—',
@@ -725,9 +941,9 @@ export const exportMultiSectionToGoogleSheets = async (
   }
 
   // ================= STEP 4: CREATE / UPDATE EMBEDDED CHARTS IN GOOGLE SHEET =================
-  // Add Loan & Budget & Habit charts to the "📊 Executive Analysis" tab
+  // Only add charts to "📊 Executive Analysis" if not already present, preventing duplicate stacked charts
   const analysisSheet = existingSheets.find((s) => s.title === '📊 Executive Analysis');
-  if (analysisSheet && analysisSheet.id !== undefined) {
+  if (analysisSheet && analysisSheet.id !== undefined && (!analysisSheet.charts || analysisSheet.charts.length === 0)) {
     const analysisSheetId = analysisSheet.id;
 
     try {
@@ -857,10 +1073,91 @@ export const exportMultiSectionToGoogleSheets = async (
     }
   }
 
+  const syncFinishDate = new Date();
+  const currentYm = syncFinishDate.toISOString().slice(0, 7);
+  if (syncFinishDate.getDate() >= 5) {
+    try {
+      localStorage.setItem(STORAGE_KEYS.MONTHLY_5TH_SHEET_SYNC, currentYm);
+      writeToIDB(STORAGE_KEYS.MONTHLY_5TH_SHEET_SYNC, currentYm);
+    } catch {}
+  }
+
   return {
     spreadsheetId,
     spreadsheetUrl: `https://docs.google.com/spreadsheets/d/${spreadsheetId}/edit`,
   };
+};
+
+export const getMonthly5thAutoSyncStatus = (): {
+  lastSyncedMonth: string | null;
+  isCurrentMonthSynced: boolean;
+  nextSyncLabel: string;
+} => {
+  const now = new Date();
+  const currentYm = now.toISOString().slice(0, 7);
+  const lastSyncedMonth = (() => {
+    try {
+      return localStorage.getItem(STORAGE_KEYS.MONTHLY_5TH_SHEET_SYNC);
+    } catch {
+      return null;
+    }
+  })();
+
+  const isCurrentMonthSynced = lastSyncedMonth === currentYm;
+  const day = now.getDate();
+  let nextSyncDate: Date;
+  if (day < 5 && !isCurrentMonthSynced) {
+    nextSyncDate = new Date(now.getFullYear(), now.getMonth(), 5);
+  } else {
+    nextSyncDate = new Date(now.getFullYear(), now.getMonth() + 1, 5);
+  }
+  const nextSyncLabel = nextSyncDate.toLocaleDateString('en-US', {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+  });
+
+  return {
+    lastSyncedMonth,
+    isCurrentMonthSynced,
+    nextSyncLabel,
+  };
+};
+
+/**
+ * Automatically updates the Master Google Sheet on (or after) the 5th of every month
+ * if a Google OAuth token is cached locally, without opening an unprompted popup.
+ */
+export const checkAndRunMonthly5thSheetAutoSync = async (
+  data?: MultiSectionSheetData
+): Promise<{ synced: boolean; spreadsheetUrl?: string }> => {
+  try {
+    const now = new Date();
+    if (now.getDate() < 5) {
+      return { synced: false };
+    }
+    const currentYm = now.toISOString().slice(0, 7);
+    let lastSynced = localStorage.getItem(STORAGE_KEYS.MONTHLY_5TH_SHEET_SYNC);
+    if (!lastSynced) {
+      lastSynced = await readFromIDB(STORAGE_KEYS.MONTHLY_5TH_SHEET_SYNC);
+    }
+    if (lastSynced === currentYm) {
+      return { synced: false };
+    }
+
+    // Only auto-run silently if we already have a stored OAuth token so we don't trigger unexpected popups
+    const existingToken = localStorage.getItem(TOKEN_STORAGE_KEY);
+    if (!existingToken) {
+      return { synced: false };
+    }
+
+    const res = await exportMultiSectionToGoogleSheets(data || {});
+    localStorage.setItem(STORAGE_KEYS.MONTHLY_5TH_SHEET_SYNC, currentYm);
+    writeToIDB(STORAGE_KEYS.MONTHLY_5TH_SHEET_SYNC, currentYm);
+    return { synced: true, spreadsheetUrl: res.spreadsheetUrl };
+  } catch {
+    return { synced: false };
+  }
 };
 
 /**

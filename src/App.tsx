@@ -16,7 +16,11 @@ import {
   defaultDinacharyaLogs,
   defaultHabits,
   defaultJournalEntries,
+  defaultTasksList,
+  defaultEventsList,
+  syncExpensesToMonthlyArchive,
 } from './services/storage';
+import { checkAndRunMonthly5thSheetAutoSync } from './services/googleSheets';
 import type {
   CalendarEvent,
   NoteItem,
@@ -89,46 +93,11 @@ export default function App() {
   );
 
   const [tasks, setTasks] = useState<ChecklistTask[]>(() =>
-    getStoredData(STORAGE_KEYS.CHECKLISTS, [
-      { id: 't1', text: 'Revise Charaka Samhita Kayachikitsa Sutras', isCompleted: false, category: 'exam_study', priority: 'high', createdAt: new Date().toISOString() },
-      { id: 't2', text: 'Verify 50 Clinical Case Log Diaries with Professor', isCompleted: true, category: 'clinic_prep', priority: 'high', createdAt: new Date().toISOString() },
-      { id: 't3', text: 'Pay SBI Education Loan EMI by 10th', isCompleted: false, category: 'financial', priority: 'high', createdAt: new Date().toISOString() },
-      { id: 't4', text: 'Review 6M Ayurveda & 6M Modern hospital posting preferences', isCompleted: false, category: 'clinic_prep', priority: 'medium', createdAt: new Date().toISOString() },
-    ])
+    getStoredData(STORAGE_KEYS.CHECKLISTS, defaultTasksList)
   );
 
   const [events, setEvents] = useState<CalendarEvent[]>(() =>
-    getStoredData(STORAGE_KEYS.EVENTS, [
-      {
-        id: 'e1',
-        title: 'Kayachikitsa Final Proff Paper I Exam',
-        startDate: '2026-11-15T09:30',
-        endDate: '2026-11-15T12:30',
-        category: 'study',
-        priority: 'urgent',
-        location: 'College Examination Hall',
-        syncedToGoogle: false,
-      },
-      {
-        id: 'e2',
-        title: 'Shalya Tantra Theory Paper II',
-        startDate: '2026-11-20T09:30',
-        endDate: '2026-11-20T12:30',
-        category: 'study',
-        priority: 'high',
-        location: 'College Examination Hall',
-        syncedToGoogle: false,
-      },
-      {
-        id: 'e3',
-        title: 'Hospital Clinical Bedside Duty',
-        startDate: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
-        category: 'clinical',
-        priority: 'high',
-        location: 'Panchakarma & OPD Ward',
-        syncedToGoogle: false,
-      },
-    ])
+    getStoredData(STORAGE_KEYS.EVENTS, defaultEventsList)
   );
 
   const [notifications, setNotifications] = useState<AppNotification[]>(() =>
@@ -189,6 +158,7 @@ export default function App() {
     setStoredData(STORAGE_KEYS.LOANS, loans);
     setStoredData(STORAGE_KEYS.INVESTMENTS, investments);
     setStoredData(STORAGE_KEYS.EXPENSES, expenses);
+    syncExpensesToMonthlyArchive(expenses);
     setStoredData(STORAGE_KEYS.NOTES, notes);
     setStoredData(STORAGE_KEYS.CHECKLISTS, tasks);
     setStoredData(STORAGE_KEYS.EVENTS, events);
@@ -213,6 +183,19 @@ export default function App() {
 
     // Auto-save full snapshot to localStorage + IndexedDB
     autoSaveToCloud(fullSnapshot);
+
+    // Every 5th of month, auto-update the Master Google Sheet if connected
+    checkAndRunMonthly5thSheetAutoSync({
+      expenses,
+      investments,
+      loans,
+      habits,
+      dinacharyaLogs,
+      tasks,
+      notes,
+      events,
+      journalEntries,
+    }).catch(() => {});
 
     const handlePersistOnHide = () => {
       autoSaveToCloud(fullSnapshot);
