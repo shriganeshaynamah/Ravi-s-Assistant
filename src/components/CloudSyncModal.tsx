@@ -18,7 +18,12 @@ import {
 import { uploadBackupToGoogleDrive } from '../services/googleDrive';
 import { exportMultiSectionToGoogleSheets } from '../services/googleSheets';
 import { createGoogleCalendarEvent } from '../services/googleCalendar';
-import { googleSignIn } from '../services/firebase';
+import {
+  googleSignIn,
+  savePermanentUserEmail,
+  logout,
+  USER_EMAIL_KEY,
+} from '../services/firebase';
 import type { CalendarEvent, ExpenseRecord } from '../types';
 
 interface CloudSyncModalProps {
@@ -59,18 +64,52 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
 
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const [emailInput, setEmailInput] = useState<string>(() => {
+    try {
+      return user?.email || localStorage.getItem(USER_EMAIL_KEY) || 'rk867000@gmail.com';
+    } catch {
+      return 'rk867000@gmail.com';
+    }
+  });
 
   if (!isOpen) return null;
 
   const handleSignIn = async () => {
+    setErrorMessage(null);
+    setSuccessMessage(null);
     try {
-      const res = await googleSignIn();
+      const res = await googleSignIn(emailInput);
       if (res?.user) {
         onUserChange(res.user);
+        setSuccessMessage(
+          `Logged in as ${res.user.email}. Your email is saved permanently and will stay logged in on every website or APK launch!`
+        );
       }
     } catch (e: any) {
       setErrorMessage(e.message || 'Google Sign-in failed');
     }
+  };
+
+  const handleSavePermanentEmail = (e: React.FormEvent) => {
+    e.preventDefault();
+    setErrorMessage(null);
+    setSuccessMessage(null);
+    const clean = emailInput.trim();
+    if (!clean || !clean.includes('@')) {
+      setErrorMessage('Please enter a valid email address.');
+      return;
+    }
+    const permUser = savePermanentUserEmail(clean);
+    onUserChange(permUser);
+    setSuccessMessage(
+      `Email (${clean}) saved permanently! You will remain logged in automatically whenever the website or APK launches.`
+    );
+  };
+
+  const handleSignOut = async () => {
+    await logout();
+    onUserChange(null);
+    setSuccessMessage('Signed out and cleared saved email login.');
   };
 
   const handleDriveBackup = async () => {
@@ -237,35 +276,75 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
           </div>
         )}
 
-        {/* Google Account Status */}
-        <div className={`p-4 rounded-2xl border flex flex-col sm:flex-row sm:items-center justify-between gap-4 ${
-          isDark ? 'bg-slate-800/80 border-slate-700/80' : 'bg-slate-50 border-slate-200'
-        }`}>
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-full bg-slate-200 dark:bg-slate-700 flex items-center justify-center text-sm font-bold text-emerald-600 dark:text-emerald-400">
-              {user ? (user.displayName || user.email || 'R')[0].toUpperCase() : 'G'}
+        {/* Google Account & Permanent Email Login Status */}
+        <div
+          className={`p-4 rounded-2xl border space-y-3 ${
+            isDark ? 'bg-slate-800/80 border-slate-700/80' : 'bg-slate-50 border-slate-200'
+          }`}
+        >
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <div className="w-9 h-9 rounded-full bg-slate-200 dark:bg-slate-700 flex items-center justify-center text-sm font-bold text-emerald-600 dark:text-emerald-400">
+                {user ? (user.displayName || user.email || 'R')[0].toUpperCase() : 'G'}
+              </div>
+              <div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <p className="text-xs font-bold text-slate-900 dark:text-white">
+                    {user ? user.displayName || user.email : 'Account Not Connected'}
+                  </p>
+                  {user?.email && (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9.5px] font-bold bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30">
+                      <ShieldCheck className="w-3 h-3" />
+                      <span>Saved Permanently ({user.email})</span>
+                    </span>
+                  )}
+                </div>
+                <p className="text-[11px] text-slate-600 dark:text-slate-400">
+                  {user
+                    ? 'Permanently logged in across Website, Vercel & Android APK launches'
+                    : 'Login once with your email or Google account to stay permanently signed in'}
+                </p>
+              </div>
             </div>
-            <div>
-              <p className="text-xs font-bold text-slate-900 dark:text-white">
-                {user ? user.displayName || user.email : 'Google Account Not Connected'}
-              </p>
-              <p className="text-[11px] text-slate-600 dark:text-slate-400">
-                {user
-                  ? 'Authorized for Google Calendar, Google Drive & Google Sheets'
-                  : 'Connect your Google account to enable live cloud sync'}
-              </p>
+
+            <div className="flex items-center gap-2">
+              <button
+                onClick={handleSignIn}
+                className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-sm cursor-pointer"
+              >
+                <LogIn className="w-3.5 h-3.5" />
+                <span>{user ? 'Reconnect Google OAuth' : 'Sign in with Google'}</span>
+              </button>
+              {user && (
+                <button
+                  onClick={handleSignOut}
+                  className="px-3 py-2 rounded-xl bg-rose-500/15 hover:bg-rose-500/25 text-rose-600 dark:text-rose-400 border border-rose-500/30 font-bold text-xs cursor-pointer"
+                >
+                  Sign Out
+                </button>
+              )}
             </div>
           </div>
 
-          {!user && (
+          {/* Direct Permanent Email Login Bar (Ideal for Vercel & Converted APK) */}
+          <form
+            onSubmit={handleSavePermanentEmail}
+            className="pt-2.5 border-t border-slate-200 dark:border-slate-700/80 flex flex-col sm:flex-row items-stretch sm:items-center gap-2"
+          >
+            <input
+              type="email"
+              value={emailInput}
+              onChange={(e) => setEmailInput(e.target.value)}
+              placeholder="Enter email to save permanently (e.g. rk867000@gmail.com)"
+              className="flex-1 px-3 py-1.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
+            />
             <button
-              onClick={handleSignIn}
-              className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-sm cursor-pointer"
+              type="submit"
+              className="px-3.5 py-1.5 rounded-xl bg-teal-600 hover:bg-teal-500 text-white font-bold text-xs cursor-pointer shrink-0"
             >
-              <LogIn className="w-3.5 h-3.5" />
-              <span>Sign in with Google</span>
+              Save Email Permanently
             </button>
-          )}
+          </form>
         </div>
 
         {/* Sync Actions Grid */}

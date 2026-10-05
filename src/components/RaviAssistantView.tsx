@@ -1,4 +1,6 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
+import { getQuestionSpecificQuickAnswers } from '../utils/prashnaQuickAnswers';
+import { getStoredData, setStoredData } from '../services/storage';
 import type {
   LoanItem,
   InvestmentItem,
@@ -47,6 +49,7 @@ import {
 } from 'lucide-react';
 import {
   queryMedicalAssistant,
+  getInstantClinicalAnalysis,
   analyzeLifeOSData,
   getInvestigationReferenceDetails,
   type InvestigationReferenceGuide,
@@ -101,22 +104,93 @@ export const RaviAssistantView: React.FC<RaviAssistantViewProps> = ({
   const [isSolvingCustom, setIsSolvingCustom] = useState(false);
   const [customSolverResult, setCustomSolverResult] = useState<string | null>(null);
 
-  // Medics Section State
-  const [patientAge, setPatientAge] = useState<string | number>('38');
-  const [patientGender, setPatientGender] = useState<'Male' | 'Female' | 'Other' | ''>('Female');
-  const [patientPrakriti, setPatientPrakriti] = useState('Vata-Pitta');
-  const [patientAgni, setPatientAgni] = useState<string>('Vishamagni');
-  const [patientKostha, setPatientKostha] = useState<string>('Krura Kostha');
-  const [isPrakritiModalOpen, setIsPrakritiModalOpen] = useState(false);
-  const [selectedPresetId, setSelectedPresetId] = useState<string>('amavata');
+  // Medics Section State (Persisted automatically so data is never lost across app/APK launches)
+  const savedMedicsDraft = useMemo(
+    () =>
+      getStoredData<Record<string, any>>('ayurlife_medics_state', {
+        patientName: '',
+        patientAddress: '',
+        patientContact: '',
+        patientAge: '38',
+        patientGender: 'Female',
+        patientPrakriti: 'Vata-Pitta',
+        patientAgni: 'Vishamagni',
+        patientKostha: 'Krura Kostha',
+        selectedPresetId: 'amavata',
+        diseaseInput: 'Amavata (Rheumatoid Arthritis)',
+        symptomsInput: '',
+        durationInput: '',
+        notesInput: '',
+      }),
+    []
+  );
 
-  const [diseaseInput, setDiseaseInput] = useState('Amavata (Rheumatoid Arthritis)');
-  const [symptomsInput, setSymptomsInput] = useState('');
-  const [durationInput, setDurationInput] = useState('');
-  const [notesInput, setNotesInput] = useState('');
+  const [patientName, setPatientName] = useState<string>(savedMedicsDraft.patientName ?? '');
+  const [patientAddress, setPatientAddress] = useState<string>(savedMedicsDraft.patientAddress ?? '');
+  const [patientContact, setPatientContact] = useState<string>(savedMedicsDraft.patientContact ?? '');
+  const [patientAge, setPatientAge] = useState<string | number>(savedMedicsDraft.patientAge ?? '38');
+  const [patientGender, setPatientGender] = useState<'Male' | 'Female' | 'Other' | ''>(
+    savedMedicsDraft.patientGender ?? 'Female'
+  );
+  const [patientPrakriti, setPatientPrakriti] = useState(savedMedicsDraft.patientPrakriti || 'Vata-Pitta');
+  const [patientAgni, setPatientAgni] = useState<string>(savedMedicsDraft.patientAgni || 'Vishamagni');
+  const [patientKostha, setPatientKostha] = useState<string>(savedMedicsDraft.patientKostha || 'Krura Kostha');
+  const [isPrakritiModalOpen, setIsPrakritiModalOpen] = useState(false);
+  const [selectedPresetId, setSelectedPresetId] = useState<string>(savedMedicsDraft.selectedPresetId ?? 'amavata');
+
+  const [diseaseInput, setDiseaseInput] = useState(
+    savedMedicsDraft.diseaseInput || 'Amavata (Rheumatoid Arthritis)'
+  );
+  const [symptomsInput, setSymptomsInput] = useState(savedMedicsDraft.symptomsInput ?? '');
+  const [durationInput, setDurationInput] = useState(savedMedicsDraft.durationInput ?? '');
+  const [notesInput, setNotesInput] = useState(savedMedicsDraft.notesInput ?? '');
+
+  // Persist Medics form changes automatically
+  useEffect(() => {
+    setStoredData('ayurlife_medics_state', {
+      patientName,
+      patientAddress,
+      patientContact,
+      patientAge,
+      patientGender,
+      patientPrakriti,
+      patientAgni,
+      patientKostha,
+      selectedPresetId,
+      diseaseInput,
+      symptomsInput,
+      durationInput,
+      notesInput,
+    });
+  }, [
+    patientName,
+    patientAddress,
+    patientContact,
+    patientAge,
+    patientGender,
+    patientPrakriti,
+    patientAgni,
+    patientKostha,
+    selectedPresetId,
+    diseaseInput,
+    symptomsInput,
+    durationInput,
+    notesInput,
+  ]);
 
   const [isSearchingMedics, setIsSearchingMedics] = useState(false);
-  const [medicsResult, setMedicsResult] = useState<MedicalAnalysisResult | null>(null);
+  const [medicsResult, setMedicsResult] = useState<MedicalAnalysisResult | null>(() =>
+    getInstantClinicalAnalysis({
+      diseaseName: savedMedicsDraft.diseaseInput || 'Amavata (Rheumatoid Arthritis)',
+      patientAge: Number(savedMedicsDraft.patientAge) || 38,
+      patientGender: savedMedicsDraft.patientGender || 'Female',
+      prakriti: `${savedMedicsDraft.patientPrakriti || 'Vata-Pitta'} (Agni: ${
+        savedMedicsDraft.patientAgni || 'Vishamagni'
+      }, Kostha: ${savedMedicsDraft.patientKostha || 'Krura Kostha'})`,
+      agni: savedMedicsDraft.patientAgni || 'Vishamagni',
+      kostha: savedMedicsDraft.patientKostha || 'Krura Kostha',
+    })
+  );
   const [isCopiedRx, setIsCopiedRx] = useState(false);
   const [isCopiedDDx, setIsCopiedDDx] = useState(false);
   const [selectedAcharya, setSelectedAcharya] = useState<string>('charaka');
@@ -146,6 +220,31 @@ export const RaviAssistantView: React.FC<RaviAssistantViewProps> = ({
       setDurationInput('');
       setNotesInput('');
       setPatientAge('');
+      setCheckedDifferentialQuestions({});
+      setPrashnaAnswers({});
+      setAdditionalPrashnaNote('');
+      setPrashnaRefreshedBanner(null);
+      setActiveShlokaIndex(0);
+      // Immediately synchronize clinical analysis & DDx Prashna Pariksha questions + Quick Fill options before submit
+      const instantRes = getInstantClinicalAnalysis({
+        diseaseName: p.name,
+        symptoms: p.symptoms,
+        prakriti: `${patientPrakriti} (Agni: ${patientAgni}, Kostha: ${patientKostha})`,
+        agni: patientAgni,
+        kostha: patientKostha,
+      });
+      setMedicsResult(instantRes);
+      if (
+        instantRes.ayurvedicAnalysis.acharyaProtocols &&
+        instantRes.ayurvedicAnalysis.acharyaProtocols[selectedAcharya]?.isDirectlyMentioned === false
+      ) {
+        const firstDirect = Object.keys(instantRes.ayurvedicAnalysis.acharyaProtocols).find(
+          (k) => instantRes.ayurvedicAnalysis.acharyaProtocols?.[k]?.isDirectlyMentioned
+        );
+        if (firstDirect) {
+          setSelectedAcharya(firstDirect);
+        }
+      }
     }
   };
 
@@ -155,6 +254,9 @@ export const RaviAssistantView: React.FC<RaviAssistantViewProps> = ({
     setSymptomsInput('');
     setDurationInput('');
     setNotesInput('');
+    setPatientName('');
+    setPatientAddress('');
+    setPatientContact('');
     setPatientAge('');
   };
 
@@ -260,6 +362,12 @@ export const RaviAssistantView: React.FC<RaviAssistantViewProps> = ({
   const handleCopyPrescription = () => {
     if (!medicsResult) return;
     const ageStr = patientAge ? `${patientAge}Y` : 'Adult';
+    const patientHeaderParts = [
+      patientName.trim() ? `Name: ${patientName.trim()}` : null,
+      `${ageStr} / ${patientGender || 'Unspecified'}`,
+      patientContact.trim() ? `Contact: ${patientContact.trim()}` : null,
+      patientAddress.trim() ? `Address: ${patientAddress.trim()}` : null,
+    ].filter(Boolean);
     const activeAcharyaProto = medicsResult.ayurvedicAnalysis.acharyaProtocols?.[selectedAcharya];
     const activeShloka = activeAcharyaProto?.shlokaReference || medicsResult.ayurvedicAnalysis.shlokaReference;
     const activeShamanaList =
@@ -268,7 +376,7 @@ export const RaviAssistantView: React.FC<RaviAssistantViewProps> = ({
         : medicsResult.ayurvedicAnalysis.shamanaChikitsa;
 
     const text = `DR. RAVI SHANKAR (BAMS DOCTOR) - CLINICAL PRESCRIPTION
-Patient: ${ageStr} / ${patientGender || 'Unspecified'} | Prakriti: ${patientPrakriti} (Agni: ${patientAgni}, Kostha: ${patientKostha})
+Patient: ${patientHeaderParts.join(' | ')} | Prakriti: ${patientPrakriti} (Agni: ${patientAgni}, Kostha: ${patientKostha})
 Clinical Diagnosis: ${medicsResult.ayurvedicAnalysis.vyadhiVinischaya}
 Classical Reference: ${activeShloka.sourceBook} (${activeShloka.chapterAndVerse})${activeAcharyaProto ? ` • ${activeAcharyaProto.acharyaName}` : ''}
 
@@ -397,9 +505,17 @@ Doctor Confirmation Signature: Dr. Ravi Shankar, BAMS`;
       })
       .join('\n');
     const ageStr = patientAge ? `${patientAge}Y` : 'Adult';
+    const patientMeta = [
+      patientName.trim() ? patientName.trim() : null,
+      `${ageStr} / ${patientGender || 'Unspecified'}`,
+      patientContact.trim() ? `Tel: ${patientContact.trim()}` : null,
+      patientAddress.trim() ? `Addr: ${patientAddress.trim()}` : null,
+    ]
+      .filter(Boolean)
+      .join(' | ');
     const text = `DR. RAVI SHANKAR (BAMS) - CLINICAL DIFFERENTIAL INQUIRY (PRASHNA PARIKSHA)
 Case: ${diseaseInput || medicsResult.ayurvedicAnalysis.vyadhiVinischaya}
-Patient: ${ageStr} / ${patientGender || 'Unspecified'} | Prakriti: ${patientPrakriti}
+Patient: ${patientMeta} | Prakriti: ${patientPrakriti}
 Agni: ${patientAgni} | Kostha: ${patientKostha}
 
 DIFFERENTIAL QUESTIONS TO ASK THE PATIENT:
@@ -438,6 +554,9 @@ Doctor: Dr. Ravi Shankar, BAMS`;
     return (
       <PrescriptionPadView
         result={medicsResult}
+        patientName={patientName}
+        patientAddress={patientAddress}
+        patientContact={patientContact}
         patientAge={patientAge}
         patientGender={patientGender}
         patientPrakriti={patientPrakriti}
@@ -877,6 +996,48 @@ Doctor: Dr. Ravi Shankar, BAMS`;
               <p className="text-[10px] text-slate-500 dark:text-slate-400 italic">
                 Selecting a preset sets the disease name and clears other inputs so you can enter only what you want. Presenting symptoms is optional.
               </p>
+            </div>
+
+            {/* Patient Identity & Contact Row (Before Age) */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs">
+              <div>
+                <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">
+                  Patient Name (Optional)
+                </label>
+                <input
+                  type="text"
+                  value={patientName}
+                  onChange={(e) => setPatientName(e.target.value)}
+                  placeholder="e.g. Ramesh Kumar or blank"
+                  className="w-full px-2.5 py-1.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white"
+                />
+              </div>
+
+              <div>
+                <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">
+                  Address (Optional)
+                </label>
+                <input
+                  type="text"
+                  value={patientAddress}
+                  onChange={(e) => setPatientAddress(e.target.value)}
+                  placeholder="e.g. Gaya, Bihar or blank"
+                  className="w-full px-2.5 py-1.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white"
+                />
+              </div>
+
+              <div>
+                <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">
+                  Contact (Optional)
+                </label>
+                <input
+                  type="text"
+                  value={patientContact}
+                  onChange={(e) => setPatientContact(e.target.value)}
+                  placeholder="e.g. +91 9876543210 or blank"
+                  className="w-full px-2.5 py-1.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white"
+                />
+              </div>
             </div>
 
             {/* Form Details Grid */}
@@ -1367,7 +1528,7 @@ Doctor: Dr. Ravi Shankar, BAMS`;
                                 "{item.shlokaTransliteration}"
                               </p>
                               <p className="text-[11px] text-slate-700 dark:text-slate-300 pt-1 border-t border-slate-100 dark:border-slate-800">
-                                <strong>Chikitsa Meaning:</strong> {item.meaning}
+                                <strong>Chikitsa Meaning (English Translation of Shloka):</strong> {item.meaning}
                               </p>
                             </div>
                           ))}
@@ -1380,7 +1541,7 @@ Doctor: Dr. Ravi Shankar, BAMS`;
                                 {activeChikitsaShlokaItem.title}
                               </span>
                               <span className="text-[10px] font-mono font-bold text-amber-800 dark:text-amber-300 bg-amber-100/80 dark:bg-amber-950/60 px-2 py-0.5 rounded">
-                                📖 Ref: {activeChikitsaShlokaItem.reference}
+                                📖 Textbook Ref: {activeChikitsaShlokaItem.reference}
                               </span>
                             </div>
                             <p className="text-sm sm:text-base font-bold text-slate-900 dark:text-amber-100 font-serif text-center py-1">
@@ -1390,7 +1551,8 @@ Doctor: Dr. Ravi Shankar, BAMS`;
                               "{activeChikitsaShlokaItem.shlokaTransliteration}"
                             </p>
                             <div className="pt-1.5 border-t border-emerald-100 dark:border-emerald-800/60 text-[11.5px] text-slate-800 dark:text-slate-200 leading-relaxed">
-                              <strong>Chikitsa Meaning:</strong> {activeChikitsaShlokaItem.meaning}
+                              <strong>Chikitsa Meaning (English Translation of Shloka):</strong>{' '}
+                              {activeChikitsaShlokaItem.meaning}
                             </div>
 
                             {/* Numbered Shloka Dots / Quick Selector */}
@@ -1742,60 +1904,76 @@ Doctor: Dr. Ravi Shankar, BAMS`;
                   </div>
                 </div>
 
-                {/* Modern Pharmacotherapy Standard with Ticks */}
+                {/* Modern Pharmacotherapy Standard with Textbook References & Ticks */}
                 <div className="space-y-1.5 text-xs">
-                  <div className="flex items-center justify-between">
+                  <div className="flex items-center justify-between flex-wrap gap-1">
                     <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-                      Modern Pharmacotherapy Reference (Katzung / Harrison’s):
+                      Modern Pharmacotherapy — All Medicines with Textbook References (Harrison’s / KD Tripathi / Katzung):
                     </span>
                     <span className="text-[9.5px] text-slate-400">
-                      Tick to include in Rx
+                      {medicsResult.modernMedicineAnalysis.pharmacotherapyStandard.length} Evidence-Based Regimens • Tick to include in Rx
                     </span>
                   </div>
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                    {medicsResult.modernMedicineAnalysis.pharmacotherapyStandard.map((pharm, idx) => (
-                      <div
-                        key={idx}
-                        onClick={() =>
-                          setConfirmedModernMedicines({
-                            ...confirmedModernMedicines,
-                            [pharm.genericName]: confirmedModernMedicines[pharm.genericName] === false ? true : !confirmedModernMedicines[pharm.genericName],
-                          })
-                        }
-                        className={`p-3 rounded-xl border space-y-1 cursor-pointer transition-all ${
-                          confirmedModernMedicines[pharm.genericName] !== false
-                            ? 'bg-blue-50/50 dark:bg-blue-950/20 border-blue-300 dark:border-blue-700'
-                            : 'opacity-50 bg-slate-50 dark:bg-slate-800/40 border-slate-200 dark:border-slate-800'
-                        }`}
-                      >
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-1.5">
-                            <strong className="text-slate-900 dark:text-white text-xs">
-                              {pharm.genericName}
-                            </strong>
-                            <span className="text-[9px] uppercase px-1.5 py-0.2 bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-300 rounded font-bold">
-                              {pharm.drugClass}
+                    {medicsResult.modernMedicineAnalysis.pharmacotherapyStandard.map((pharm, idx) => {
+                      const pharmRef =
+                        pharm.reference ||
+                        medicsResult.modernMedicineAnalysis.textbookReferences?.[
+                          idx % (medicsResult.modernMedicineAnalysis.textbookReferences.length || 1)
+                        ] ||
+                        "Harrison's Principles of Internal Medicine 21st Ed / KD Tripathi 8th Ed";
+                      return (
+                        <div
+                          key={idx}
+                          onClick={() =>
+                            setConfirmedModernMedicines({
+                              ...confirmedModernMedicines,
+                              [pharm.genericName]:
+                                confirmedModernMedicines[pharm.genericName] === false
+                                  ? true
+                                  : !confirmedModernMedicines[pharm.genericName],
+                            })
+                          }
+                          className={`p-3 rounded-xl border space-y-1.5 cursor-pointer transition-all ${
+                            confirmedModernMedicines[pharm.genericName] !== false
+                              ? 'bg-blue-50/50 dark:bg-blue-950/20 border-blue-300 dark:border-blue-700'
+                              : 'opacity-50 bg-slate-50 dark:bg-slate-800/40 border-slate-200 dark:border-slate-800'
+                          }`}
+                        >
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="space-y-0.5">
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <span className="text-[9px] uppercase px-1.5 py-0.5 bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-300 rounded font-bold">
+                                  {pharm.drugClass}
+                                </span>
+                                <span className="text-[9.5px] font-mono font-bold px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-950/70 text-amber-900 dark:text-amber-300 border border-amber-300/70 dark:border-amber-800">
+                                  📖 Textbook Ref: {pharmRef}
+                                </span>
+                              </div>
+                              <strong className="text-slate-900 dark:text-white text-xs block pt-0.5">
+                                {pharm.genericName}
+                              </strong>
+                            </div>
+                            <span
+                              className={`w-4 h-4 rounded-md flex items-center justify-center text-[10px] font-bold shrink-0 ${
+                                confirmedModernMedicines[pharm.genericName] !== false
+                                  ? 'bg-blue-600 text-white'
+                                  : 'border border-slate-400'
+                              }`}
+                            >
+                              ✓
                             </span>
                           </div>
-                          <span
-                            className={`w-4 h-4 rounded-md flex items-center justify-center text-[10px] font-bold shrink-0 ${
-                              confirmedModernMedicines[pharm.genericName] !== false
-                                ? 'bg-blue-600 text-white'
-                                : 'border border-slate-400'
-                            }`}
-                          >
-                            ✓
-                          </span>
+                          <p className="text-[11px] text-slate-600 dark:text-slate-300">
+                            <strong>Regimen:</strong> {pharm.standardRegimen}
+                          </p>
+                          <p className="text-[10px] text-rose-600 dark:text-rose-400">
+                            <strong>Caution:</strong> {pharm.cautionOrMonitoring}
+                          </p>
                         </div>
-                        <p className="text-[11px] text-slate-600 dark:text-slate-300">
-                          {pharm.standardRegimen}
-                        </p>
-                        <p className="text-[10px] text-rose-600 dark:text-rose-400">
-                          <strong>Caution:</strong> {pharm.cautionOrMonitoring}
-                        </p>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </div>
 
@@ -1999,14 +2177,7 @@ Doctor: Dr. Ravi Shankar, BAMS`;
                                   <span className="text-[9.5px] font-bold text-slate-400 uppercase">
                                     Quick Fill:
                                   </span>
-                                  {[
-                                    'Yes, Present',
-                                    'No / Absent',
-                                    'Mild / Occasional',
-                                    'Severe / Daily',
-                                    'Relieved by Warmth',
-                                    'Worse After Meals',
-                                  ].map((chip) => (
+                                  {getQuestionSpecificQuickAnswers(q).map((chip) => (
                                     <button
                                       key={chip}
                                       type="button"

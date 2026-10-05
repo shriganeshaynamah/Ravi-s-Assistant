@@ -1,6 +1,6 @@
-import { GoogleGenAI } from '@google/genai';
 import { CLINICAL_DISEASE_PRESETS } from '../data/clinicalDiseasePresets';
 import { getAcharyaProtocols, type AcharyaClinicalProtocol } from '../data/acharyaProtocols';
+import { getModernPharmacologyForDisease } from '../data/modernPharmacotherapyData';
 import type {
   LoanItem,
   InvestmentItem,
@@ -409,6 +409,7 @@ export interface MedicalAnalysisResult {
       genericName: string;
       standardRegimen: string;
       cautionOrMonitoring: string;
+      reference?: string;
     }[];
     redFlagsAndEmergency: string[];
     dietAndNutritionGuidelines: string[];
@@ -1116,23 +1117,16 @@ export const queryMedicalAssistant = async (
 ): Promise<MedicalAnalysisResult> => {
   const queryText = (query.diseaseName || query.symptoms || '').toLowerCase();
 
-  // Try live Gemini API call first if available
+  // Try live server-side Gemini API call first
   try {
-    const apiKey =
-      (typeof process !== 'undefined' && process.env?.GEMINI_API_KEY) ||
-      (typeof window !== 'undefined' && (window as any).__GEMINI_API_KEY__) ||
-      '';
+    const prashnaBlock =
+      query.prashnaAnswers && query.prashnaAnswers.length > 0
+        ? `\nPatient's Answers to Differential Inquiry (Prashna Pariksha):\n${query.prashnaAnswers
+            .map((pa, i) => `${i + 1}. Q: ${pa.question}\n   Patient Answer: ${pa.answer}`)
+            .join('\n')}\nCRITICAL: Use these patient answers to refine or update the primary diagnosis, Dosha-Dushya stage (Sama/Nirama), and tailor the Ayurvedic & Modern treatments accordingly!`
+        : '';
 
-    if (apiKey) {
-      const ai = new GoogleGenAI({ apiKey });
-      const prashnaBlock =
-        query.prashnaAnswers && query.prashnaAnswers.length > 0
-          ? `\nPatient's Answers to Differential Inquiry (Prashna Pariksha):\n${query.prashnaAnswers
-              .map((pa, i) => `${i + 1}. Q: ${pa.question}\n   Patient Answer: ${pa.answer}`)
-              .join('\n')}\nCRITICAL: Use these patient answers to refine or update the primary diagnosis, Dosha-Dushya stage (Sama/Nirama), and tailor the Ayurvedic & Modern treatments accordingly!`
-          : '';
-
-      const prompt = `You are a clinical AI consultant for Dr. Ravi Shankar (BAMS Doctor).
+    const prompt = `You are a clinical AI consultant for Dr. Ravi Shankar (BAMS Doctor).
 Evaluate the following clinical presentation:
 Patient Details: Age: ${query.patientAge || 'Adult'}, Gender: ${query.patientGender || 'Unspecified'}, Prakriti: ${query.prakriti || 'Tridoshic evaluation'}
 Symptoms & Chief Complaints: ${query.symptoms}
@@ -1228,20 +1222,47 @@ IMPORTANT:
 2. In recommendedInvestigations, set "isMandatory": true ONLY when an investigation is strictly necessary/mandatory to confirm diagnosis or rule out danger (do NOT mark all tests as mandatory). Always explain WHY each investigation is done in diagnosticPurpose.
 Return ONLY raw valid JSON.`;
 
-      const response = await ai.models.generateContent({
-        model: 'gemini-3.8-flash',
-        contents: prompt,
-        config: {
-          responseMimeType: 'application/json',
-          temperature: 0.2,
-        },
-      });
+    const apiRes = await fetch('/api/gemini/medical', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt }),
+    });
 
-      if (response && response.text) {
-        const parsed = JSON.parse(response.text);
+    if (apiRes.ok) {
+      const data = await apiRes.json();
+      if (data && data.text) {
+        const parsed = JSON.parse(data.text);
         if (parsed.ayurvedicAnalysis && parsed.modernMedicineAnalysis) {
+          const baseline = getInstantClinicalAnalysis(query);
           const dName = query.diseaseName || parsed.ayurvedicAnalysis.vyadhiVinischaya;
-          parsed.ayurvedicAnalysis.acharyaProtocols = getAcharyaProtocols(dName, parsed.ayurvedicAnalysis);
+          const acharyaMap = getAcharyaProtocols(dName, parsed.ayurvedicAnalysis);
+          parsed.ayurvedicAnalysis.acharyaProtocols = acharyaMap;
+          const primaryProto = acharyaMap.charaka?.isDirectlyMentioned
+            ? acharyaMap.charaka
+            : acharyaMap.chakradatta || acharyaMap.charaka;
+          if (primaryProto && primaryProto.shlokaReference?.shlokaSanskrit && primaryProto.shlokaReference.shlokaSanskrit !== 'NA') {
+            parsed.ayurvedicAnalysis.shlokaReference = primaryProto.shlokaReference;
+            parsed.ayurvedicAnalysis.chikitsaSutra = primaryProto.chikitsaSutra;
+            if (primaryProto.shamanaChikitsa?.length > 0) {
+              parsed.ayurvedicAnalysis.shamanaChikitsa = primaryProto.shamanaChikitsa;
+            }
+            if (primaryProto.shodhanaChikitsa?.length > 0) {
+              parsed.ayurvedicAnalysis.shodhanaChikitsa = primaryProto.shodhanaChikitsa;
+            }
+          }
+          const modernPharm = getModernPharmacologyForDisease(dName, query.symptoms || '');
+          parsed.modernMedicineAnalysis.pharmacotherapyStandard = modernPharm.pharmacotherapyStandard;
+          parsed.modernMedicineAnalysis.pathophysiologySummary = modernPharm.pathophysiologySummary;
+          parsed.modernMedicineAnalysis.textbookReferences = modernPharm.textbookReferences;
+
+          // Always use the curated disease-specific differential diagnosis & Prashna Pariksha questions
+          // so Quick Fill options match 100% both BEFORE and AFTER clicking Submit Patient Answers!
+          parsed.differentialDiagnosis = baseline.differentialDiagnosis;
+          if (query.prashnaAnswers && query.prashnaAnswers.length > 0) {
+            parsed.ayurvedicAnalysis.vyadhiVinischaya = baseline.ayurvedicAnalysis.vyadhiVinischaya;
+            parsed.ayurvedicAnalysis.doshaDushya.agni = baseline.ayurvedicAnalysis.doshaDushya.agni;
+            parsed.doctorVerificationSummary = baseline.doctorVerificationSummary;
+          }
           return parsed;
         }
       }
@@ -1249,6 +1270,12 @@ Return ONLY raw valid JSON.`;
   } catch (err) {
     console.warn('Live Gemini API call note (using comprehensive clinical database fallback):', err);
   }
+
+  return getInstantClinicalAnalysis(query);
+};
+
+export const getInstantClinicalAnalysis = (query: MedicalCaseQuery): MedicalAnalysisResult => {
+  const queryText = (query.diseaseName || query.symptoms || '').toLowerCase();
 
   const attachProtocols = (res: MedicalAnalysisResult): MedicalAnalysisResult => {
     const clone: MedicalAnalysisResult = JSON.parse(JSON.stringify(res));
@@ -1262,9 +1289,9 @@ Return ONLY raw valid JSON.`;
 
       // Check if patient answers point toward a specific competing condition or stage
       let stageNote = 'Refined via Prashna Pariksha';
-      if (ansLower.includes('crepitus') || ansLower.includes('stairs') || ansLower.includes('< 30') || ansLower.includes('15 min') || ansLower.includes('warm oil helps')) {
+      if (ansLower.includes('crepitus') || ansLower.includes('stairs') || ansLower.includes('< 30') || ansLower.includes('15 min') || ansLower.includes('warm oil')) {
         stageNote = 'Nirama / Dhatukshayaja Vata Predominance Confirmed on Prashna Pariksha';
-      } else if (ansLower.includes('morning stiffness') || ansLower.includes('> 1 hour') || ansLower.includes('fever') || ansLower.includes('heaviness') || ansLower.includes('oil worsens') || ansLower.includes('yes')) {
+      } else if (ansLower.includes('morning stiffness') || ansLower.includes('> 1 hour') || ansLower.includes('> 60') || ansLower.includes('fever') || ansLower.includes('heaviness') || ansLower.includes('oil worsens') || ansLower.includes('yes')) {
         stageNote = 'Active Sama Stage & Pratyatma Lakshana Confirmed on Prashna Pariksha';
       } else if (ansLower.includes('burning') || ansLower.includes('sour') || ansLower.includes('acid') || ansLower.includes('night')) {
         stageNote = 'Pitta-Anubandha / Vidagdha Stage Confirmed on Prashna Pariksha';
@@ -1283,7 +1310,28 @@ Return ONLY raw valid JSON.`;
     }
 
     const dName = query.diseaseName || clone.ayurvedicAnalysis.vyadhiVinischaya;
-    clone.ayurvedicAnalysis.acharyaProtocols = getAcharyaProtocols(dName, clone.ayurvedicAnalysis);
+    const acharyaMap = getAcharyaProtocols(dName, clone.ayurvedicAnalysis);
+    clone.ayurvedicAnalysis.acharyaProtocols = acharyaMap;
+
+    const primaryProto = acharyaMap.charaka?.isDirectlyMentioned
+      ? acharyaMap.charaka
+      : acharyaMap.chakradatta || acharyaMap.charaka;
+    if (primaryProto && primaryProto.shlokaReference?.shlokaSanskrit && primaryProto.shlokaReference.shlokaSanskrit !== 'NA') {
+      clone.ayurvedicAnalysis.shlokaReference = primaryProto.shlokaReference;
+      clone.ayurvedicAnalysis.chikitsaSutra = primaryProto.chikitsaSutra;
+      if (primaryProto.shamanaChikitsa?.length > 0) {
+        clone.ayurvedicAnalysis.shamanaChikitsa = primaryProto.shamanaChikitsa;
+      }
+      if (primaryProto.shodhanaChikitsa?.length > 0) {
+        clone.ayurvedicAnalysis.shodhanaChikitsa = primaryProto.shodhanaChikitsa;
+      }
+    }
+
+    const modernPharm = getModernPharmacologyForDisease(dName, query.symptoms || '');
+    clone.modernMedicineAnalysis.pharmacotherapyStandard = modernPharm.pharmacotherapyStandard;
+    clone.modernMedicineAnalysis.pathophysiologySummary = modernPharm.pathophysiologySummary;
+    clone.modernMedicineAnalysis.textbookReferences = modernPharm.textbookReferences;
+
     return clone;
   };
 
@@ -1549,16 +1597,9 @@ function generateCustomClinicalResponse(query: MedicalCaseQuery): MedicalAnalysi
             'Secondary inflammatory or metabolic mimic',
             'Functional or neuro-humoral disorder',
           ],
-      pathophysiologySummary: `Clinical evaluation of ${sym}. Cellular stress response, neuro-endocrine axis alteration, or targeted Srotas/organ pathology.`,
+      pathophysiologySummary: getModernPharmacologyForDisease(disease, sym).pathophysiologySummary,
       recommendedInvestigations: buildSpecificInvestigations(),
-      pharmacotherapyStandard: [
-        {
-          drugClass: 'First-Line Targeted Therapy / Supportive',
-          genericName: 'Evidence-based standard agent for ' + (match?.modernName || disease),
-          standardRegimen: 'Titrated according to clinical severity and hepatic/renal clearance',
-          cautionOrMonitoring: 'Monitor clinical response and avoid concurrent herb-drug overlap (keep 2-hour gap)',
-        },
-      ],
+      pharmacotherapyStandard: getModernPharmacologyForDisease(disease, sym).pharmacotherapyStandard,
       redFlagsAndEmergency: [
         'Sudden severe unremitting pain or high-grade fever with rigors',
         'Altered mental status, syncope, or hemodynamic instability',
@@ -1569,10 +1610,7 @@ function generateCustomClinicalResponse(query: MedicalCaseQuery): MedicalAnalysi
         'Adequate hydration (2.5 - 3 Liters daily)',
         'Micronutrient replenishment (Vitamins D3, B12, and Minerals)',
       ],
-      textbookReferences: [
-        "Harrison's Principles of Internal Medicine 21st Edition",
-        "Guyton and Hall Textbook of Medical Physiology 14th Edition",
-      ],
+      textbookReferences: getModernPharmacologyForDisease(disease, sym).textbookReferences,
     },
     differentialDiagnosis: (() => {
       if (match) {
@@ -2055,3 +2093,122 @@ export const analyzeLifeOSData = (data: {
     strategicOpportunities: opportunities,
   };
 };
+
+export interface PersonalAIChatContext {
+  loans: LoanItem[];
+  investments: InvestmentItem[];
+  expenses: ExpenseRecord[];
+  habits: HabitItem[];
+  dinacharyaLogs: DinacharyaLog[];
+  milestones: RoadmapMilestone[];
+  tasks?: ChecklistTask[];
+}
+
+export const chatWithPersonalAI = async (
+  message: string,
+  history: { role: 'user' | 'assistant'; text: string }[],
+  context: PersonalAIChatContext
+): Promise<string> => {
+  const todayStr = new Date().toISOString().split('T')[0];
+  const totalDebt = context.loans.reduce((acc, l) => acc + (l.principalAmount || 0), 0);
+  const totalDebtPaid = context.loans.reduce((acc, l) => acc + (l.totalPaid || 0), 0);
+  const remainingDebt = Math.max(0, totalDebt - totalDebtPaid);
+  const monthlyEmi = context.loans
+    .filter((l) => l.status === 'active' || l.status === 'partially_paid')
+    .reduce((acc, l) => acc + (l.monthlyEmi || 0), 0);
+
+  const totalInvested = context.investments.reduce((acc, i) => acc + (i.investedAmount || 0), 0);
+  const totalValuation = context.investments.reduce((acc, i) => acc + (i.currentValue || 0), 0);
+  const totalSip = context.investments.reduce((acc, i) => acc + (i.sipMonthly || 0), 0);
+
+  const totalExpense = context.expenses
+    .filter((e) => e.type === 'expense')
+    .reduce((acc, e) => acc + (e.amount || 0), 0);
+  const totalIncome = context.expenses
+    .filter((e) => e.type === 'income')
+    .reduce((acc, e) => acc + (e.amount || 0), 0);
+
+  const completedHabits = context.habits.filter((h) => h.completedDates.includes(todayStr));
+  const pendingHabits = context.habits.filter((h) => !h.completedDates.includes(todayStr));
+  const pendingTasks = (context.tasks || []).filter((t) => !t.isCompleted);
+  const activeMilestone = context.milestones.find((m) => m.status === 'current');
+
+  const contextSummary = [
+    `Date: ${todayStr}`,
+    `Loans: ${context.loans.length} total | Principal: ₹${totalDebt.toLocaleString('en-IN')}, Paid: ₹${totalDebtPaid.toLocaleString('en-IN')}, Remaining: ₹${remainingDebt.toLocaleString('en-IN')}, Monthly EMI: ₹${monthlyEmi.toLocaleString('en-IN')}/mo`,
+    `Investments: ${context.investments.length} assets | Invested: ₹${totalInvested.toLocaleString('en-IN')}, Current Value: ₹${totalValuation.toLocaleString('en-IN')}, Monthly SIP: ₹${totalSip.toLocaleString('en-IN')}/mo`,
+    `Cash Flow: Income ₹${totalIncome.toLocaleString('en-IN')} | Expenses ₹${totalExpense.toLocaleString('en-IN')}`,
+    `Habits Today: ${completedHabits.length}/${context.habits.length} completed. Pending: ${pendingHabits.map((h) => h.name).join(', ') || 'None'}`,
+    `Pending Keep To-Do Tasks (${pendingTasks.length}): ${pendingTasks.slice(0, 5).map((t) => t.text).join('; ') || 'None'}`,
+    `Active Roadmap Milestone: ${activeMilestone ? `${activeMilestone.title} (${activeMilestone.period})` : 'None'}`,
+  ].join('\n');
+
+  try {
+    const res = await fetch('/api/gemini/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        message,
+        history,
+        contextSummary,
+      }),
+    });
+
+    if (res.ok) {
+      const data = await res.json();
+      if (data && data.reply) {
+        return data.reply;
+      }
+    }
+  } catch (err) {
+    console.warn('Gemini chat endpoint fallback triggered:', err);
+  }
+
+  // Context-aware intelligent fallback using live LifeOS & clinical database
+  const q = message.toLowerCase();
+
+  if (q.includes('loan') || q.includes('emi') || q.includes('debt')) {
+    if (context.loans.length === 0) {
+      return `You currently have **0 active loans** recorded (₹0/mo EMI).\n• If you have an education or personal loan, you can add it in the **Loans** section.\n• **Liquidity Tip:** In tight months, use a ₹1,000–₹2,000 1-month friend bridge rather than taking high-interest app loans.`;
+    }
+    return `Here is your live **Loan & EMI status**:\n• **Active Loans:** ${context.loans.length} (${context.loans.map((l) => l.title).join(', ')})\n• **Remaining Balance:** ₹${remainingDebt.toLocaleString('en-IN')} (Paid: ₹${totalDebtPaid.toLocaleString('en-IN')} of ₹${totalDebt.toLocaleString('en-IN')})\n• **Monthly EMI:** ₹${monthlyEmi.toLocaleString('en-IN')}/mo\n• **Strategy:** Keep ₹${monthlyEmi.toLocaleString('en-IN')} locked 3 days before auto-debit. In surplus months, prepay ₹1,000–₹2,000 toward principal.`;
+  }
+
+  if (q.includes('invest') || q.includes('sip') || q.includes('wealth') || q.includes('portfolio')) {
+    return `Here is your **Investment & SIP summary**:\n• **Total Invested:** ₹${totalInvested.toLocaleString('en-IN')}\n• **Current Valuation:** ₹${totalValuation.toLocaleString('en-IN')} (${totalValuation - totalInvested >= 0 ? '+' : ''}₹${(totalValuation - totalInvested).toLocaleString('en-IN')})\n• **Active Monthly SIP:** ₹${totalSip.toLocaleString('en-IN')}/mo\n• **Advice:** Maintain a ₹5,000 liquid emergency buffer first, then step up your Nifty 50 & Clinic Capital SIPs in surplus months.`;
+  }
+
+  if (q.includes('expense') || q.includes('budget') || q.includes('spend') || q.includes('income') || q.includes('money')) {
+    return `Here is your **Expense & Cash Flow overview**:\n• **Recorded Income:** ₹${totalIncome.toLocaleString('en-IN')}\n• **Recorded Expenses:** ₹${totalExpense.toLocaleString('en-IN')}\n• **Net Balance (after ₹${monthlyEmi.toLocaleString('en-IN')} EMI):** ₹${(totalIncome - totalExpense - monthlyEmi).toLocaleString('en-IN')}\n• **Buffer Rule:** For minor ₹1k–₹2k gaps, use a 30-day friend bridge; reserve brother support (up to ₹5k) only for non-regular major months.`;
+  }
+
+  if (q.includes('habit') || q.includes('dinacharya') || q.includes('routine') || q.includes('streak')) {
+    return `Your **Habits & Dinacharya status for today (${todayStr})**:\n• **Completed:** ${completedHabits.length} of ${context.habits.length} habits\n• **Pending Today:** ${pendingHabits.length > 0 ? pendingHabits.map((h) => h.name).join(', ') : 'All habits completed! 🔥'}\n• **Tip:** Waking in Brahma Muhurta (4:30–5:00 AM) with warm Ushnodaka keeps your Agni and clinical focus sharp.`;
+  }
+
+  if (q.includes('task') || q.includes('todo') || q.includes('to-do') || q.includes('work')) {
+    return `You have **${pendingTasks.length} pending task(s)** in Keep To-Do:\n${
+      pendingTasks.length > 0
+        ? pendingTasks.slice(0, 4).map((t, i) => `${i + 1}. ${t.text} [${t.priority.toUpperCase()}]`).join('\n')
+        : '• All tasks are currently completed!'
+    }\nFocus on clearing your highest-priority clinical and study tasks first thing in the morning.`;
+  }
+
+  if (q.includes('exam') || q.includes('study') || q.includes('roadmap') || q.includes('bams') || q.includes('proff') || q.includes('aiapget')) {
+    return `**Academic & Roadmap Focus:**\n• **Current Phase:** ${activeMilestone ? `${activeMilestone.title} (${activeMilestone.period})` : 'BAMS Final Proff & Clinical Preparation'}\n• **Study Strategy:** Dedicate 90 minutes each morning to Brihat Trayi (Charaka Chikitsa Sthana & Sushruta Uttaratantra) and 30 minutes each evening to clinical case revision & AIAPGET MCQs.`;
+  }
+
+  // Check if question is about a clinical disease in our presets
+  const matchedPreset = CLINICAL_DISEASE_PRESETS.find(
+    (p) =>
+      q.includes(p.ayurvedicName.toLowerCase()) ||
+      q.includes(p.modernName.toLowerCase()) ||
+      q.includes(p.id.toLowerCase())
+  );
+  if (matchedPreset) {
+    return `**Clinical Summary for ${matchedPreset.name}:**\n• **Dosha & Srotas:** ${matchedPreset.category} (${matchedPreset.symptoms})\n• **Key Shamana:** Check the **Medicos Area** tab in Ravi's Assistant for complete Acharya-wise Samhita Shlokas, Chikitsa Sutra, and textbook Shamana Aushadhi for ${matchedPreset.ayurvedicName}.`;
+  }
+
+  return `Namaste Dr. Ravi! Here is your live snapshot & answer:\n• **Habits Today:** ${completedHabits.length}/${context.habits.length} done (${pendingHabits.length} pending)\n• **Pending Tasks:** ${pendingTasks.length} in Keep To-Do\n• **Finances:** ₹${monthlyEmi.toLocaleString('en-IN')}/mo EMI | ₹${totalValuation.toLocaleString('en-IN')} Portfolio | ₹${totalExpense.toLocaleString('en-IN')} Expenses\n• **Academic Focus:** ${activeMilestone ? activeMilestone.title : 'BAMS Final Proff'}\n\nAsk me anything specific about your **loans, expenses, habits, tasks, BAMS study plan, or Ayurvedic clinical treatments**!`;
+};
+

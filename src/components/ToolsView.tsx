@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
+import { getStoredData, setStoredData } from '../services/storage';
 import {
   Wrench,
   Calculator,
@@ -15,25 +16,61 @@ interface ToolsViewProps {
 }
 
 export const ToolsView: React.FC<ToolsViewProps> = ({ isDark }) => {
-  const [activeTab, setActiveTab] = useState<'emi' | 'sip' | 'dosage' | 'bmi'>('emi');
+  const savedTools = useMemo(
+    () =>
+      getStoredData<Record<string, any>>('ayurlife_tools_state', {
+        activeTab: 'emi',
+        p: 500000,
+        r: 8.5,
+        n: 36,
+        sipMonthly: 5000,
+        sipReturn: 13.5,
+        sipYears: 5,
+        patientAge: 10,
+        adultDose: 1000,
+        weightKg: 65,
+        heightCm: 170,
+      }),
+    []
+  );
+
+  const [activeTab, setActiveTab] = useState<'emi' | 'sip' | 'dosage' | 'bmi'>(
+    savedTools.activeTab || 'emi'
+  );
 
   // EMI State
-  const [p, setP] = useState(500000);
-  const [r, setR] = useState(8.5);
-  const [n, setN] = useState(36);
+  const [p, setP] = useState<number>(savedTools.p ?? 500000);
+  const [r, setR] = useState<number>(savedTools.r ?? 8.5);
+  const [n, setN] = useState<number>(savedTools.n ?? 36);
 
   // SIP State
-  const [sipMonthly, setSipMonthly] = useState(5000);
-  const [sipReturn, setSipReturn] = useState(13.5);
-  const [sipYears, setSipYears] = useState(5);
+  const [sipMonthly, setSipMonthly] = useState<number>(savedTools.sipMonthly ?? 5000);
+  const [sipReturn, setSipReturn] = useState<number>(savedTools.sipReturn ?? 13.5);
+  const [sipYears, setSipYears] = useState<number>(savedTools.sipYears ?? 5);
 
   // Dosage State (Sharngadhara Rule)
-  const [patientAge, setPatientAge] = useState(10);
-  const [adultDose, setAdultDose] = useState(1000); // mg or ml
+  const [patientAge, setPatientAge] = useState<number>(savedTools.patientAge ?? 10);
+  const [adultDose, setAdultDose] = useState<number>(savedTools.adultDose ?? 1000); // mg or ml
 
   // BMI State
-  const [weightKg, setWeightKg] = useState(65);
-  const [heightCm, setHeightCm] = useState(170);
+  const [weightKg, setWeightKg] = useState<number>(savedTools.weightKg ?? 65);
+  const [heightCm, setHeightCm] = useState<number>(savedTools.heightCm ?? 170);
+
+  useEffect(() => {
+    setStoredData('ayurlife_tools_state', {
+      activeTab,
+      p,
+      r,
+      n,
+      sipMonthly,
+      sipReturn,
+      sipYears,
+      patientAge,
+      adultDose,
+      weightKg,
+      heightCm,
+    });
+  }, [activeTab, p, r, n, sipMonthly, sipReturn, sipYears, patientAge, adultDose, weightKg, heightCm]);
 
   // Calculate EMI
   const monthlyRate = r / 12 / 100;

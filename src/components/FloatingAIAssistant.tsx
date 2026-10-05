@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef, useEffect } from 'react';
 import type {
   LoanItem,
   InvestmentItem,
@@ -7,6 +7,7 @@ import type {
   JournalEntry,
   DinacharyaLog,
   RoadmapMilestone,
+  ChecklistTask,
 } from '../types';
 import {
   Sparkles,
@@ -17,16 +18,17 @@ import {
   Flame,
   BookOpen,
   Calendar,
-  AlertTriangle,
   CheckCircle2,
   ChevronRight,
   Bot,
-  Zap,
   DollarSign,
-  ShieldCheck,
   RefreshCw,
+  Send,
+  MessageSquare,
+  Trash2,
 } from 'lucide-react';
 import type { FeatureTab } from './HamburgerDrawer';
+import { chatWithPersonalAI } from '../services/geminiMedical';
 
 interface FloatingAIAssistantProps {
   loans: LoanItem[];
@@ -36,6 +38,7 @@ interface FloatingAIAssistantProps {
   journalEntries: JournalEntry[];
   dinacharyaLogs: DinacharyaLog[];
   milestones: RoadmapMilestone[];
+  tasks?: ChecklistTask[];
   onNavigate: (tab: FeatureTab) => void;
   isDark?: boolean;
 }
@@ -50,6 +53,13 @@ export interface SmartAlert {
   actionLabel?: string;
 }
 
+interface AIChatMessage {
+  id: string;
+  role: 'user' | 'assistant';
+  text: string;
+  time: string;
+}
+
 export const FloatingAIAssistant: React.FC<FloatingAIAssistantProps> = ({
   loans,
   investments,
@@ -58,6 +68,7 @@ export const FloatingAIAssistant: React.FC<FloatingAIAssistantProps> = ({
   journalEntries,
   dinacharyaLogs,
   milestones,
+  tasks = [],
   onNavigate,
   isDark = true,
 }) => {
@@ -65,6 +76,25 @@ export const FloatingAIAssistant: React.FC<FloatingAIAssistantProps> = ({
   const [activeTab, setActiveTab] = useState<'notifications' | 'briefing'>('notifications');
   const [isGeneratingBriefing, setIsGeneratingBriefing] = useState(false);
   const [aiBriefingText, setAiBriefingText] = useState<string | null>(null);
+
+  // AI Chat state inside AI Briefing
+  const [chatInput, setChatInput] = useState('');
+  const [isSendingChat, setIsSendingChat] = useState(false);
+  const [chatMessages, setChatMessages] = useState<AIChatMessage[]>([
+    {
+      id: 'welcome-msg',
+      role: 'assistant',
+      text: 'Namaste Dr. Ravi! Ask me anything about your loans, EMIs, expenses, habits, pending tasks, BAMS exams, or Ayurvedic & Modern treatments.',
+      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+    },
+  ]);
+  const chatEndRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (activeTab === 'briefing') {
+      chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [chatMessages, isSendingChat, activeTab]);
 
   const todayStr = useMemo(() => new Date().toISOString().split('T')[0], []);
 
@@ -139,17 +169,17 @@ export const FloatingAIAssistant: React.FC<FloatingAIAssistantProps> = ({
       });
     }
 
-    // 4. DIARY / JOURNAL VAULT ALERT
+    // 4. DIARY / JOURNAL ALERT
     const wroteDiaryToday = journalEntries.some((e) => e.date === todayStr);
     if (!wroteDiaryToday) {
       list.push({
         id: 'journal-missing-today',
         category: 'journal',
         title: 'Daily Journal Entry Pending',
-        message: "You haven't recorded today's diary in your personal vault yet. Pen your reflections and gratitude!",
+        message: "You haven't recorded today's entry in your Journal yet. Pen your reflections and gratitude!",
         severity: 'info',
         actionTab: 'corners',
-        actionLabel: 'Open Vault',
+        actionLabel: 'Open Journal',
       });
     }
 
@@ -213,11 +243,66 @@ export const FloatingAIAssistant: React.FC<FloatingAIAssistantProps> = ({
 
 3. Ayurvedic & Academic Regimen:
 • BAMS Final Proff preparations are actively tracked in your Roadmap.
-• Don't forget to pen your daily learnings in the 0002 Personal Diary Vault!`;
+• Don't forget to pen your daily learnings in your Journal!`;
 
       setAiBriefingText(briefing);
       setIsGeneratingBriefing(false);
     }, 600);
+  };
+
+  const handleSendChatMessage = async (customPrompt?: string) => {
+    const textToSend = (customPrompt ?? chatInput).trim();
+    if (!textToSend || isSendingChat) return;
+
+    const userMsg: AIChatMessage = {
+      id: `user-${Date.now()}`,
+      role: 'user',
+      text: textToSend,
+      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+    };
+
+    const updatedHistory = [...chatMessages, userMsg];
+    setChatMessages(updatedHistory);
+    if (!customPrompt) setChatInput('');
+    setIsSendingChat(true);
+
+    try {
+      const reply = await chatWithPersonalAI(
+        textToSend,
+        updatedHistory.map((m) => ({ role: m.role, text: m.text })),
+        {
+          loans,
+          investments,
+          expenses,
+          habits,
+          dinacharyaLogs,
+          milestones,
+          tasks,
+        }
+      );
+
+      setChatMessages((prev) => [
+        ...prev,
+        {
+          id: `ai-${Date.now()}`,
+          role: 'assistant',
+          text: reply,
+          time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        },
+      ]);
+    } catch (err: any) {
+      setChatMessages((prev) => [
+        ...prev,
+        {
+          id: `ai-err-${Date.now()}`,
+          role: 'assistant',
+          text: `Unable to reach AI right now: ${err?.message || 'Please try again.'}`,
+          time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        },
+      ]);
+    } finally {
+      setIsSendingChat(false);
+    }
   };
 
   return (
@@ -253,9 +338,9 @@ export const FloatingAIAssistant: React.FC<FloatingAIAssistantProps> = ({
       {/* Floating AI Panel / Popup Modal */}
       {isOpen && (
         <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-3 bg-black/60 backdrop-blur-xs animate-in fade-in">
-          <div className="w-full max-w-sm rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xl p-4 space-y-4 max-h-[85vh] flex flex-col animate-in slide-in-from-bottom duration-200">
+          <div className="w-full max-w-md rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xl p-4 space-y-3 max-h-[88vh] flex flex-col animate-in slide-in-from-bottom duration-200">
             {/* Header */}
-            <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
+            <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3 shrink-0">
               <div className="flex items-center gap-2">
                 <div className="w-8 h-8 rounded-xl bg-linear-to-tr from-emerald-500 to-teal-500 text-white flex items-center justify-center shadow-xs">
                   <Bot className="w-4 h-4" />
@@ -268,21 +353,21 @@ export const FloatingAIAssistant: React.FC<FloatingAIAssistantProps> = ({
                     </span>
                   </h3>
                   <p className="text-[10px] text-slate-500 dark:text-slate-400 font-medium">
-                    Tracking EMIs, SIPs, habits & daily vault
+                    Tracking EMIs, SIPs, habits & daily journal
                   </p>
                 </div>
               </div>
 
               <button
                 onClick={() => setIsOpen(false)}
-                className="p-1 rounded-xl text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 text-xs font-bold"
+                className="p-1 rounded-xl text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 text-xs font-bold cursor-pointer"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
             {/* Sub-tabs: Notifications vs AI Briefing */}
-            <div className="grid grid-cols-2 gap-1 p-1 bg-slate-100 dark:bg-slate-800 rounded-xl text-xs font-bold">
+            <div className="grid grid-cols-2 gap-1 p-1 bg-slate-100 dark:bg-slate-800 rounded-xl text-xs font-bold shrink-0">
               <button
                 onClick={() => setActiveTab('notifications')}
                 className={`py-1.5 rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
@@ -307,12 +392,12 @@ export const FloatingAIAssistant: React.FC<FloatingAIAssistantProps> = ({
                 }`}
               >
                 <Sparkles className="w-3.5 h-3.5" />
-                <span>AI Briefing</span>
+                <span>AI Briefing & Chat</span>
               </button>
             </div>
 
             {/* Body Area */}
-            <div className="flex-1 overflow-y-auto space-y-2.5 pr-0.5">
+            <div className="flex-1 overflow-y-auto space-y-2.5 pr-0.5 min-h-0">
               {activeTab === 'notifications' && (
                 <div className="space-y-2">
                   {alerts.length === 0 ? (
@@ -411,27 +496,27 @@ export const FloatingAIAssistant: React.FC<FloatingAIAssistantProps> = ({
                   </div>
 
                   {isGeneratingBriefing ? (
-                    <div className="py-8 text-center text-xs text-slate-400 space-y-2">
-                      <Sparkles className="w-6 h-6 text-emerald-500 animate-spin mx-auto" />
+                    <div className="py-5 text-center text-xs text-slate-400 space-y-2">
+                      <Sparkles className="w-5 h-5 text-emerald-500 animate-spin mx-auto" />
                       <p>Synthesizing complete website health...</p>
                     </div>
                   ) : (
-                    <div className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 text-xs font-sans text-slate-700 dark:text-slate-300 whitespace-pre-line leading-relaxed">
+                    <div className="p-3 rounded-2xl bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 text-[11px] font-sans text-slate-700 dark:text-slate-300 whitespace-pre-line leading-relaxed">
                       {aiBriefingText}
                     </div>
                   )}
 
                   {/* Quick Shortcut Buttons */}
-                  <div className="pt-1 grid grid-cols-2 gap-2 text-xs">
+                  <div className="grid grid-cols-4 gap-1.5 text-[10px]">
                     <button
                       onClick={() => {
                         onNavigate('expense');
                         setIsOpen(false);
                       }}
-                      className="p-2 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-slate-700 dark:text-slate-300 font-bold flex items-center justify-center gap-1.5 cursor-pointer"
+                      className="p-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-slate-700 dark:text-slate-300 font-bold flex items-center justify-center gap-1 cursor-pointer"
                     >
-                      <CreditCard className="w-3.5 h-3.5 text-rose-500" />
-                      <span>Loans & EMI</span>
+                      <CreditCard className="w-3 h-3 text-rose-500 shrink-0" />
+                      <span className="truncate">Loans</span>
                     </button>
 
                     <button
@@ -439,10 +524,10 @@ export const FloatingAIAssistant: React.FC<FloatingAIAssistantProps> = ({
                         onNavigate('dinacharya');
                         setIsOpen(false);
                       }}
-                      className="p-2 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-slate-700 dark:text-slate-300 font-bold flex items-center justify-center gap-1.5 cursor-pointer"
+                      className="p-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-slate-700 dark:text-slate-300 font-bold flex items-center justify-center gap-1 cursor-pointer"
                     >
-                      <Flame className="w-3.5 h-3.5 text-amber-500" />
-                      <span>Habits</span>
+                      <Flame className="w-3 h-3 text-amber-500 shrink-0" />
+                      <span className="truncate">Habits</span>
                     </button>
 
                     <button
@@ -450,10 +535,10 @@ export const FloatingAIAssistant: React.FC<FloatingAIAssistantProps> = ({
                         onNavigate('corners');
                         setIsOpen(false);
                       }}
-                      className="p-2 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-slate-700 dark:text-slate-300 font-bold flex items-center justify-center gap-1.5 cursor-pointer"
+                      className="p-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-slate-700 dark:text-slate-300 font-bold flex items-center justify-center gap-1 cursor-pointer"
                     >
-                      <BookOpen className="w-3.5 h-3.5 text-purple-500" />
-                      <span>0002 Vault</span>
+                      <BookOpen className="w-3 h-3 text-purple-500 shrink-0" />
+                      <span className="truncate">Journal</span>
                     </button>
 
                     <button
@@ -461,15 +546,130 @@ export const FloatingAIAssistant: React.FC<FloatingAIAssistantProps> = ({
                         onNavigate('roadmap');
                         setIsOpen(false);
                       }}
-                      className="p-2 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-slate-700 dark:text-slate-300 font-bold flex items-center justify-center gap-1.5 cursor-pointer"
+                      className="p-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-slate-700 dark:text-slate-300 font-bold flex items-center justify-center gap-1 cursor-pointer"
                     >
-                      <Calendar className="w-3.5 h-3.5 text-teal-500" />
-                      <span>Roadmap</span>
+                      <Calendar className="w-3 h-3 text-teal-500 shrink-0" />
+                      <span className="truncate">Roadmap</span>
                     </button>
+                  </div>
+
+                  {/* ================= AI CHAT BOX SECTION ================= */}
+                  <div className="pt-2 border-t border-slate-200 dark:border-slate-800 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-1.5">
+                        <MessageSquare className="w-3.5 h-3.5 text-emerald-500" />
+                        <span className="text-[11px] font-extrabold text-slate-900 dark:text-white">
+                          Chat with Your AI
+                        </span>
+                      </div>
+                      {chatMessages.length > 1 && (
+                        <button
+                          onClick={() =>
+                            setChatMessages([
+                              {
+                                id: 'welcome-msg',
+                                role: 'assistant',
+                                text: 'Namaste Dr. Ravi! Ask me anything about your loans, EMIs, expenses, habits, pending tasks, BAMS exams, or Ayurvedic & Modern treatments.',
+                                time: new Date().toLocaleTimeString([], {
+                                  hour: '2-digit',
+                                  minute: '2-digit',
+                                }),
+                              },
+                            ])
+                          }
+                          className="text-[10px] font-semibold text-slate-400 hover:text-rose-500 flex items-center gap-1 cursor-pointer"
+                          title="Clear Chat"
+                        >
+                          <Trash2 className="w-3 h-3" />
+                          <span>Clear</span>
+                        </button>
+                      )}
+                    </div>
+
+                    {/* Quick Starter Prompts */}
+                    <div className="flex items-center gap-1.5 overflow-x-auto pb-1 no-scrollbar">
+                      {[
+                        'Loans & EMI status?',
+                        'Today’s habits & tasks?',
+                        'BAMS study plan?',
+                        'Amavata Chikitsa?',
+                      ].map((promptChip) => (
+                        <button
+                          key={promptChip}
+                          type="button"
+                          onClick={() => handleSendChatMessage(promptChip)}
+                          disabled={isSendingChat}
+                          className="px-2 py-1 rounded-lg bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-200 dark:border-emerald-800/70 text-[10px] font-bold text-emerald-700 dark:text-emerald-300 whitespace-nowrap hover:bg-emerald-100 dark:hover:bg-emerald-900/60 transition-colors cursor-pointer shrink-0"
+                        >
+                          {promptChip}
+                        </button>
+                      ))}
+                    </div>
+
+                    {/* Chat Messages Thread */}
+                    <div className="space-y-2 max-h-52 overflow-y-auto p-2 rounded-2xl bg-slate-50/80 dark:bg-slate-950/60 border border-slate-200/80 dark:border-slate-800">
+                      {chatMessages.map((msg) => (
+                        <div
+                          key={msg.id}
+                          className={`flex flex-col ${
+                            msg.role === 'user' ? 'items-end' : 'items-start'
+                          }`}
+                        >
+                          <div
+                            className={`max-w-[88%] px-3 py-2 rounded-2xl text-[11px] leading-relaxed whitespace-pre-line ${
+                              msg.role === 'user'
+                                ? 'bg-emerald-600 text-white rounded-br-xs font-medium'
+                                : 'bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200 border border-slate-200 dark:border-slate-700 rounded-bl-xs'
+                            }`}
+                          >
+                            {msg.text}
+                          </div>
+                          <span className="text-[9px] text-slate-400 mt-0.5 px-1">
+                            {msg.role === 'user' ? 'You' : 'AI Assistant'} • {msg.time}
+                          </span>
+                        </div>
+                      ))}
+
+                      {isSendingChat && (
+                        <div className="flex items-center gap-2 text-[11px] text-emerald-600 dark:text-emerald-400 px-2 py-1">
+                          <RefreshCw className="w-3 h-3 animate-spin" />
+                          <span>AI is thinking...</span>
+                        </div>
+                      )}
+                      <div ref={chatEndRef} />
+                    </div>
                   </div>
                 </div>
               )}
             </div>
+
+            {/* Pinned Chat Input Form when on AI Briefing tab */}
+            {activeTab === 'briefing' && (
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  handleSendChatMessage();
+                }}
+                className="pt-2 border-t border-slate-100 dark:border-slate-800 flex items-center gap-2 shrink-0"
+              >
+                <input
+                  type="text"
+                  value={chatInput}
+                  onChange={(e) => setChatInput(e.target.value)}
+                  placeholder="Ask your AI anything (finances, habits, BAMS, clinical)..."
+                  disabled={isSendingChat}
+                  className="flex-1 px-3 py-2 rounded-xl text-xs bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                />
+                <button
+                  type="submit"
+                  disabled={!chatInput.trim() || isSendingChat}
+                  className="p-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white transition-all cursor-pointer flex items-center justify-center shrink-0"
+                  title="Send message"
+                >
+                  <Send className="w-4 h-4" />
+                </button>
+              </form>
+            )}
           </div>
         </div>
       )}

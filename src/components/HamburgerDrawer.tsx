@@ -21,6 +21,7 @@ import {
   CheckSquare,
   Bot,
   Sparkles,
+  BookOpen,
 } from 'lucide-react';
 import type { User } from 'firebase/auth';
 
@@ -88,7 +89,7 @@ export const HamburgerDrawer: React.FC<HamburgerDrawerProps> = ({
     { id: 'calendar' as FeatureTab, label: 'Calendar & Events', icon: Calendar },
     { id: 'tools' as FeatureTab, label: 'Tools', icon: Wrench },
     { id: 'dinacharya' as FeatureTab, label: 'Habit Tracker (DinCharya & Ritu)', icon: Activity },
-    { id: 'corners' as FeatureTab, label: 'Journey Corners (0002 Vault)', icon: Lock },
+    { id: 'corners' as FeatureTab, label: 'Journal', icon: BookOpen },
   ];
 
   return (

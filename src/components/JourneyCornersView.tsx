@@ -247,10 +247,10 @@ export const JourneyCornersView: React.FC<JourneyCornersViewProps> = ({
             <Lock className="w-6 h-6 stroke-[2.2]" />
           </div>
           <h2 className="text-base font-bold text-slate-900 dark:text-white">
-            Personal Diary Vault
+            Journal
           </h2>
           <p className="text-[11px] text-slate-500 dark:text-slate-400 max-w-xs mx-auto">
-            Your personal reflections &amp; confidential journey corner. Enter passcode to access.
+            Your personal journal &amp; confidential reflections. Enter passcode to access.
           </p>
         </div>
 
@@ -331,10 +331,10 @@ export const JourneyCornersView: React.FC<JourneyCornersViewProps> = ({
         <div>
           <h2 className="text-base font-bold tracking-tight text-slate-900 dark:text-white flex items-center gap-1.5">
             <BookOpen className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
-            <span>Personal Diary Vault</span>
+            <span>Journal</span>
           </h2>
           <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5 font-medium">
-            Daily journal, reflections &amp; personal journey corner
+            Daily journal, reflections &amp; personal notes
           </p>
         </div>
 
@@ -363,7 +363,7 @@ export const JourneyCornersView: React.FC<JourneyCornersViewProps> = ({
         <div className="flex items-center gap-2">
           <ShieldCheck className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
           <span className="text-xs font-bold text-emerald-900 dark:text-emerald-300">
-            Vault Protected • {entries.length} Diary Entries
+            Journal Protected • {entries.length} Journal Entries
           </span>
         </div>
         <span className="text-[10px] font-mono font-medium text-emerald-700 dark:text-emerald-400 bg-emerald-100 dark:bg-emerald-900/60 px-2 py-0.5 rounded-full">

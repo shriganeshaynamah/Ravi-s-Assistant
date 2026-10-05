@@ -428,11 +428,106 @@ export const defaultKeepNotes: NoteItem[] = [
 // Seed Expenses (Cleared for manual user entry)
 export const defaultExpensesList: ExpenseRecord[] = [];
 
+// Request permanent storage permission from browser / Android WebView so data is never evicted
+try {
+  if (typeof navigator !== 'undefined' && navigator.storage && navigator.storage.persist) {
+    navigator.storage.persist().catch(() => {});
+  }
+} catch {}
+
+const IDB_NAME = 'ayurlife_persistent_idb';
+const IDB_STORE = 'kv_store';
+
+// Capture what was in localStorage at initial script boot BEFORE React initial render effects run
+const BOOT_LS_SNAPSHOT_RAW = (() => {
+  try {
+    return typeof localStorage !== 'undefined'
+      ? localStorage.getItem('ayurlife_cloud_full_snapshot')
+      : null;
+  } catch {
+    return null;
+  }
+})();
+
+let isIDBHydrationFinished = false;
+
+const openPersistentIDB = (): Promise<IDBDatabase | null> => {
+  return new Promise((resolve) => {
+    try {
+      if (typeof indexedDB === 'undefined') {
+        resolve(null);
+        return;
+      }
+      const req = indexedDB.open(IDB_NAME, 1);
+      req.onupgradeneeded = () => {
+        const db = req.result;
+        if (!db.objectStoreNames.contains(IDB_STORE)) {
+          db.createObjectStore(IDB_STORE);
+        }
+      };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => resolve(null);
+    } catch {
+      resolve(null);
+    }
+  });
+};
+
+export const writeToIDB = async (key: string, value: string): Promise<void> => {
+  try {
+    const db = await openPersistentIDB();
+    if (!db) return;
+    const tx = db.transaction(IDB_STORE, 'readwrite');
+    tx.objectStore(IDB_STORE).put(value, key);
+  } catch {}
+};
+
+export const readFromIDB = async (key: string): Promise<string | null> => {
+  try {
+    const db = await openPersistentIDB();
+    if (!db) return null;
+    return await new Promise((resolve) => {
+      const tx = db.transaction(IDB_STORE, 'readonly');
+      const req = tx.objectStore(IDB_STORE).get(key);
+      req.onsuccess = () => resolve(typeof req.result === 'string' ? req.result : null);
+      req.onerror = () => resolve(null);
+    });
+  } catch {
+    return null;
+  }
+};
+
+// Map STORAGE_KEYS to snapshot field names for automatic fallback recovery
+const KEY_TO_SNAPSHOT_FIELD: Record<string, string> = {
+  [STORAGE_KEYS.MILESTONES]: 'milestones',
+  [STORAGE_KEYS.LOANS]: 'loans',
+  [STORAGE_KEYS.INVESTMENTS]: 'investments',
+  [STORAGE_KEYS.EXPENSES]: 'expenses',
+  [STORAGE_KEYS.NOTES]: 'notes',
+  [STORAGE_KEYS.CHECKLISTS]: 'tasks',
+  [STORAGE_KEYS.EVENTS]: 'events',
+  [STORAGE_KEYS.NOTIFICATIONS]: 'notifications',
+  [STORAGE_KEYS.DINACHARYA]: 'dinacharyaLogs',
+  [STORAGE_KEYS.HABITS]: 'habits',
+  [STORAGE_KEYS.JOURNAL]: 'journalEntries',
+};
+
 export const getStoredData = <T>(key: string, fallback: T): T => {
   try {
     const raw = localStorage.getItem(key);
-    if (!raw) return fallback;
-    return JSON.parse(raw);
+    if (raw !== null && raw !== undefined && raw !== '') {
+      return JSON.parse(raw);
+    }
+    // Check master snapshot in localStorage if individual key was cleared
+    const snapRaw = localStorage.getItem('ayurlife_cloud_full_snapshot');
+    const snapField = KEY_TO_SNAPSHOT_FIELD[key];
+    if (snapRaw && snapField) {
+      const snap = JSON.parse(snapRaw);
+      if (snap && snap[snapField] !== undefined) {
+        return snap[snapField] as T;
+      }
+    }
+    return fallback;
   } catch (e) {
     return fallback;
   }
@@ -440,8 +535,12 @@ export const getStoredData = <T>(key: string, fallback: T): T => {
 
 export const setStoredData = <T>(key: string, data: T): void => {
   try {
-    localStorage.setItem(key, JSON.stringify(data));
-    // Also record cloud sync status
+    const serialized = JSON.stringify(data);
+    localStorage.setItem(key, serialized);
+    if (isIDBHydrationFinished || BOOT_LS_SNAPSHOT_RAW) {
+      writeToIDB(key, serialized);
+    }
+    // Also record local/cloud sync status
     const now = new Date();
     const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
     localStorage.setItem('ayurlife_cloud_last_synced', timeStr);
@@ -459,12 +558,72 @@ export const getLastCloudSyncTime = (): string => {
 
 export const autoSaveToCloud = (allData: Record<string, any>): void => {
   try {
-    const serialized = JSON.stringify(allData);
+    const payload = {
+      ...allData,
+      _savedAtTimestamp: Date.now(),
+    };
+    const serialized = JSON.stringify(payload);
     localStorage.setItem('ayurlife_cloud_full_snapshot', serialized);
+    if (isIDBHydrationFinished || BOOT_LS_SNAPSHOT_RAW) {
+      writeToIDB('ayurlife_cloud_full_snapshot', serialized);
+    }
     const now = new Date();
     const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
     localStorage.setItem('ayurlife_cloud_last_synced', timeStr);
     window.dispatchEvent(new CustomEvent('ayurlife_cloud_synced', { detail: { time: timeStr } }));
   } catch (e) {}
+};
+
+/**
+ * Hydrates state from IndexedDB if localStorage was cleared by an Android APK WebView restart
+ */
+export const hydrateFromPersistentDB = async (
+  onHydrated: (snapshot: Record<string, any>) => void
+): Promise<void> => {
+  try {
+    const idbSnapRaw = await readFromIDB('ayurlife_cloud_full_snapshot');
+    if (!idbSnapRaw) {
+      isIDBHydrationFinished = true;
+      const currentLs = localStorage.getItem('ayurlife_cloud_full_snapshot');
+      if (currentLs) {
+        writeToIDB('ayurlife_cloud_full_snapshot', currentLs);
+      }
+      return;
+    }
+    const idbSnap = JSON.parse(idbSnapRaw);
+    if (!idbSnap || typeof idbSnap !== 'object') {
+      isIDBHydrationFinished = true;
+      return;
+    }
+
+    let shouldRestoreFromIDB = !BOOT_LS_SNAPSHOT_RAW;
+
+    if (BOOT_LS_SNAPSHOT_RAW) {
+      try {
+        const lsSnap = JSON.parse(BOOT_LS_SNAPSHOT_RAW);
+        const idbTime = Number(idbSnap._savedAtTimestamp || 0);
+        const lsTime = Number(lsSnap?._savedAtTimestamp || 0);
+        if (idbTime > lsTime) {
+          shouldRestoreFromIDB = true;
+        }
+      } catch {
+        shouldRestoreFromIDB = true;
+      }
+    }
+
+    isIDBHydrationFinished = true;
+
+    if (shouldRestoreFromIDB) {
+      localStorage.setItem('ayurlife_cloud_full_snapshot', idbSnapRaw);
+      Object.entries(KEY_TO_SNAPSHOT_FIELD).forEach(([storageKey, field]) => {
+        if (idbSnap[field] !== undefined) {
+          localStorage.setItem(storageKey, JSON.stringify(idbSnap[field]));
+        }
+      });
+      onHydrated(idbSnap);
+    }
+  } catch {
+    isIDBHydrationFinished = true;
+  }
 };
 

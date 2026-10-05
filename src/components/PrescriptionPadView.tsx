@@ -17,6 +17,9 @@ import type { MedicalAnalysisResult } from '../services/geminiMedical';
 
 interface PrescriptionPadViewProps {
   result: MedicalAnalysisResult;
+  patientName?: string;
+  patientAddress?: string;
+  patientContact?: string;
   patientAge: string | number;
   patientGender: string;
   patientPrakriti: string;
@@ -34,6 +37,9 @@ interface PrescriptionPadViewProps {
 
 export const PrescriptionPadView: React.FC<PrescriptionPadViewProps> = ({
   result,
+  patientName = '',
+  patientAddress = '',
+  patientContact = '',
   patientAge,
   patientGender,
   patientPrakriti,
@@ -252,24 +258,27 @@ export const PrescriptionPadView: React.FC<PrescriptionPadViewProps> = ({
 
     // Patient Vitals Bar
     y += 12;
+    const hasExtraPatientInfo = Boolean(patientAddress.trim() || patientContact.trim());
+    const vitalsBoxHeight = hasExtraPatientInfo ? 62 : 42;
     ctx.fillStyle = '#ecfdf5';
     ctx.strokeStyle = '#a7f3d0';
     ctx.lineWidth = 1;
-    ctx.fillRect(pad, y, contentWidth, 42);
-    ctx.strokeRect(pad, y, contentWidth, 42);
+    ctx.fillRect(pad, y, contentWidth, vitalsBoxHeight);
+    ctx.strokeRect(pad, y, contentWidth, vitalsBoxHeight);
 
     ctx.fillStyle = '#065f46';
     ctx.font = '700 9.5px sans-serif';
     ctx.fillText('PATIENT DETAILS', pad + 14, y + 15);
-    ctx.fillText('PRAKRITI & AGNI / KOSTHA', pad + 210, y + 15);
+    ctx.fillText('PRAKRITI & AGNI / KOSTHA', pad + 260, y + 15);
     ctx.textAlign = 'right';
     ctx.fillText('DATE OF CONSULTATION', width - pad - 14, y + 15);
     ctx.textAlign = 'left';
 
     ctx.fillStyle = '#0f172a';
     ctx.font = '800 11.5px sans-serif';
+    const namePrefix = patientName.trim() ? `${patientName.trim()} • ` : '';
     ctx.fillText(
-      `${patientAge ? `${patientAge} Yrs` : 'Adult'} / ${patientGender || 'Unspecified'}`,
+      `${namePrefix}${patientAge ? `${patientAge} Yrs` : 'Adult'} / ${patientGender || 'Unspecified'}`,
       pad + 14,
       y + 32
     );
@@ -277,14 +286,24 @@ export const PrescriptionPadView: React.FC<PrescriptionPadViewProps> = ({
       `${patientPrakriti || 'Vata-Pitta'} • ${patientAgni || 'Vishamagni'} • ${
         patientKostha || 'Krura Kostha'
       }`,
-      pad + 210,
+      pad + 260,
       y + 32
     );
     ctx.textAlign = 'right';
     ctx.fillText(currentDate, width - pad - 14, y + 32);
     ctx.textAlign = 'left';
 
-    y += 60;
+    if (hasExtraPatientInfo) {
+      ctx.fillStyle = '#334155';
+      ctx.font = '600 10.5px sans-serif';
+      const extraParts = [
+        patientContact.trim() ? `Contact: ${patientContact.trim()}` : null,
+        patientAddress.trim() ? `Address: ${patientAddress.trim()}` : null,
+      ].filter(Boolean);
+      ctx.fillText(extraParts.join('   |   '), pad + 14, y + 50);
+    }
+
+    y += vitalsBoxHeight + 18;
 
     // Clinical Diagnosis
     ctx.fillStyle = '#065f46';
@@ -926,10 +945,37 @@ export const PrescriptionPadView: React.FC<PrescriptionPadViewProps> = ({
                     Patient Details
                   </span>
                   <span className="font-extrabold text-slate-900">
+                    {patientName.trim() ? `${patientName.trim()} • ` : ''}
                     {patientAge ? `${patientAge} Yrs` : 'Adult'} /{' '}
                     {patientGender || 'Unspecified'}
                   </span>
                 </div>
+                {patientContact.trim() && (
+                  <>
+                    <div className="h-5 w-px bg-emerald-200" />
+                    <div>
+                      <span className="text-[9px] uppercase font-bold text-emerald-800 block">
+                        Contact
+                      </span>
+                      <span className="font-extrabold text-slate-900">
+                        {patientContact.trim()}
+                      </span>
+                    </div>
+                  </>
+                )}
+                {patientAddress.trim() && (
+                  <>
+                    <div className="h-5 w-px bg-emerald-200" />
+                    <div>
+                      <span className="text-[9px] uppercase font-bold text-emerald-800 block">
+                        Address
+                      </span>
+                      <span className="font-semibold text-slate-800">
+                        {patientAddress.trim()}
+                      </span>
+                    </div>
+                  </>
+                )}
                 <div className="h-5 w-px bg-emerald-200" />
                 <div>
                   <span className="text-[9px] uppercase font-bold text-emerald-800 block">

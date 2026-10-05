@@ -1,6 +1,7 @@
 import React from 'react';
 import { X, Search, ShieldCheck, HelpCircle, CheckCircle2, AlertCircle, BookOpen, Layers } from 'lucide-react';
 import type { MedicalAnalysisResult } from '../services/geminiMedical';
+import { getQuestionSpecificQuickAnswers } from '../utils/prashnaQuickAnswers';
 
 interface DifferentialDiagnosisModalProps {
   isOpen: boolean;
@@ -323,7 +324,7 @@ export const DifferentialDiagnosisModal: React.FC<DifferentialDiagnosisModalProp
                     {onUpdatePrashnaAnswer && (
                       <div className="space-y-1 pl-4">
                         <div className="flex items-center gap-1 flex-wrap">
-                          {['Yes', 'No', 'Mild / Occasional', 'Severe'].map((chip) => (
+                          {getQuestionSpecificQuickAnswers(q).map((chip) => (
                             <button
                               key={chip}
                               type="button"

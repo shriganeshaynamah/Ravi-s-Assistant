@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import type { User } from 'firebase/auth';
-import { initAuth, googleSignIn, logout } from './services/firebase';
+import { initAuth, googleSignIn, logout, getSavedUser } from './services/firebase';
 import {
   getStoredData,
   setStoredData,
   autoSaveToCloud,
+  hydrateFromPersistentDB,
   STORAGE_KEYS,
   defaultMilestones,
   defaultLoans,
@@ -49,7 +50,7 @@ import { FloatingAIAssistant } from './components/FloatingAIAssistant';
 import { RaviAssistantView } from './components/RaviAssistantView';
 
 export default function App() {
-  const [user, setUser] = useState<User | null>(null);
+  const [user, setUser] = useState<User | null>(() => getSavedUser());
 
   // Day (Light) or Night (Dark) mode toggle
   const [isDark, setIsDark] = useState<boolean>(() => {
@@ -67,19 +68,20 @@ export default function App() {
   );
 
   const [loans, setLoans] = useState<LoanItem[]>(() => {
-    const stored = getStoredData<LoanItem[]>(STORAGE_KEYS.LOANS, []);
-    // Clear sample loan data (loan-1, loan-2) so user can enter data manually
+    const stored = getStoredData<LoanItem[]>(STORAGE_KEYS.LOANS, defaultLoans);
     return (stored || []).filter((l) => l.id !== 'loan-1' && l.id !== 'loan-2');
   });
 
   const [investments, setInvestments] = useState<InvestmentItem[]>(() => {
-    // User request: Clear all daily expense and investment
-    return [];
+    const stored = getStoredData<InvestmentItem[]>(STORAGE_KEYS.INVESTMENTS, defaultInvestments);
+    return (stored || []).filter((inv) => inv.id !== 'inv-1' && inv.id !== 'inv-2');
   });
 
   const [expenses, setExpenses] = useState<ExpenseRecord[]>(() => {
-    // User request: Clear all daily expense and investment
-    return [];
+    const stored = getStoredData<ExpenseRecord[]>(STORAGE_KEYS.EXPENSES, defaultExpensesList);
+    return (stored || []).filter(
+      (e) => e.id !== 'exp-1' && e.id !== 'exp-2' && e.id !== 'exp-3' && e.id !== 'exp-4'
+    );
   });
 
   const [notes, setNotes] = useState<NoteItem[]>(() =>
@@ -145,12 +147,30 @@ export default function App() {
     getStoredData(STORAGE_KEYS.JOURNAL, defaultJournalEntries)
   );
 
-  // Sync Auth
+  // Sync Auth & Hydrate Persistent IndexedDB on Launch (for Website, Vercel & Android APK)
   useEffect(() => {
     const unsub = initAuth(
       (u) => setUser(u),
-      () => setUser(null)
+      () => {
+        const saved = getSavedUser();
+        setUser(saved);
+      }
     );
+
+    hydrateFromPersistentDB((snap) => {
+      if (snap.milestones) setMilestones(snap.milestones);
+      if (snap.loans) setLoans(snap.loans);
+      if (snap.investments) setInvestments(snap.investments);
+      if (snap.expenses) setExpenses(snap.expenses);
+      if (snap.notes) setNotes(snap.notes);
+      if (snap.tasks) setTasks(snap.tasks);
+      if (snap.events) setEvents(snap.events);
+      if (snap.notifications) setNotifications(snap.notifications);
+      if (snap.dinacharyaLogs) setDinacharyaLogs(snap.dinacharyaLogs);
+      if (snap.habits) setHabits(snap.habits);
+      if (snap.journalEntries) setJournalEntries(snap.journalEntries);
+    });
+
     return () => unsub();
   }, []);
 
@@ -177,8 +197,7 @@ export default function App() {
     setStoredData(STORAGE_KEYS.HABITS, habits);
     setStoredData(STORAGE_KEYS.JOURNAL, journalEntries);
 
-    // Auto-save full snapshot to cloud storage
-    autoSaveToCloud({
+    const fullSnapshot = {
       milestones,
       loans,
       investments,
@@ -190,7 +209,20 @@ export default function App() {
       dinacharyaLogs,
       habits,
       journalEntries,
-    });
+    };
+
+    // Auto-save full snapshot to localStorage + IndexedDB
+    autoSaveToCloud(fullSnapshot);
+
+    const handlePersistOnHide = () => {
+      autoSaveToCloud(fullSnapshot);
+    };
+    window.addEventListener('pagehide', handlePersistOnHide);
+    document.addEventListener('visibilitychange', handlePersistOnHide);
+    return () => {
+      window.removeEventListener('pagehide', handlePersistOnHide);
+      document.removeEventListener('visibilitychange', handlePersistOnHide);
+    };
   }, [
     milestones,
     loans,
@@ -424,6 +456,7 @@ export default function App() {
         journalEntries={journalEntries}
         dinacharyaLogs={dinacharyaLogs}
         milestones={milestones}
+        tasks={tasks}
         onNavigate={(tab) => {
           if (tab === 'cloud') setIsCloudSyncOpen(true);
           else setActiveFeature(tab);
