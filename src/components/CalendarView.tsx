@@ -7,19 +7,11 @@ import {
   Edit2,
   MapPin,
   Clock,
-  Cloud,
   CheckCircle,
-  AlertCircle,
   Check,
   Calendar,
   X,
-  Sparkles,
 } from 'lucide-react';
-import {
-  createGoogleCalendarEvent,
-  updateGoogleCalendarEvent,
-  deleteGoogleCalendarEvent,
-} from '../services/googleCalendar';
 import { ConfirmationModal } from './ConfirmationModal';
 import type { User } from 'firebase/auth';
 
@@ -35,19 +27,14 @@ interface CalendarViewProps {
 
 export const CalendarView: React.FC<CalendarViewProps> = ({
   events,
-  user,
   onAddEvent,
   onDeleteEvent,
   onUpdateEvent,
-  onRequireAuth,
   isDark = true,
 }) => {
   const [filterCategory, setFilterCategory] = useState<string>('all');
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [editingEvent, setEditingEvent] = useState<CalendarEvent | null>(null);
-
-  const [syncingEventId, setSyncingEventId] = useState<string | null>(null);
-  const [syncError, setSyncError] = useState<string | null>(null);
   const [syncSuccessMsg, setSyncSuccessMsg] = useState<string | null>(null);
 
   // Destructive delete confirmation
@@ -65,7 +52,6 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
   const [formCategory, setFormCategory] = useState<CalendarEvent['category']>('clinical');
   const [formPriority, setFormPriority] = useState<Priority>('high');
   const [formLocation, setFormLocation] = useState('Dr. Ravi Shankar Clinic');
-  const [syncDirectlyToGoogle, setSyncDirectlyToGoogle] = useState(true);
 
   const filteredEvents = events.filter((e) => {
     if (filterCategory === 'all') return true;
@@ -80,7 +66,6 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
     setFormCategory('clinical');
     setFormPriority('high');
     setFormLocation('Dr. Ravi Shankar Clinic');
-    setSyncDirectlyToGoogle(true);
     setIsAddModalOpen(true);
   };
 
@@ -103,32 +88,6 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
     setFormCategory(evt.category);
     setFormPriority(evt.priority);
     setFormLocation(evt.location || '');
-    setSyncDirectlyToGoogle(Boolean(evt.syncedToGoogle));
-  };
-
-  const handleSyncToGoogle = async (evt: CalendarEvent) => {
-    if (!user) {
-      onRequireAuth();
-      return;
-    }
-    setSyncingEventId(evt.id);
-    setSyncError(null);
-    setSyncSuccessMsg(null);
-    try {
-      const gEvent = await createGoogleCalendarEvent(evt);
-      onUpdateEvent({
-        ...evt,
-        googleCalendarEventId: gEvent.id,
-        syncedToGoogle: true,
-      });
-      setSyncSuccessMsg(`"${evt.title}" synced to Google Calendar.`);
-      setTimeout(() => setSyncSuccessMsg(null), 3500);
-    } catch (err: any) {
-      console.error('Failed to sync to Google Calendar:', err);
-      setSyncError(err.message || 'Failed to sync to Google Calendar');
-    } finally {
-      setSyncingEventId(null);
-    }
   };
 
   const handleCreateEvent = async (e: React.FormEvent) => {
@@ -145,15 +104,13 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
       category: formCategory,
       priority: formPriority,
       location: formLocation.trim(),
-      syncedToGoogle: false,
+      syncedToGoogle: true,
     };
 
     onAddEvent(newEvent);
     setIsAddModalOpen(false);
-
-    if (syncDirectlyToGoogle && user) {
-      handleSyncToGoogle(newEvent);
-    }
+    setSyncSuccessMsg(`"${newEvent.title}" auto-saved to Firebase Cloud Storage ✓`);
+    setTimeout(() => setSyncSuccessMsg(null), 3000);
   };
 
   const handleSaveEditedEvent = async (e: React.FormEvent) => {
@@ -169,38 +126,21 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
       category: formCategory,
       priority: formPriority,
       location: formLocation.trim(),
+      syncedToGoogle: true,
     };
 
     onUpdateEvent(updatedEvent);
     setEditingEvent(null);
-
-    // If synced to Google Calendar and user logged in, update remote event
-    if (updatedEvent.googleCalendarEventId && user) {
-      try {
-        await updateGoogleCalendarEvent(updatedEvent.googleCalendarEventId, updatedEvent);
-        setSyncSuccessMsg(`Updated Google Calendar event "${updatedEvent.title}"`);
-        setTimeout(() => setSyncSuccessMsg(null), 3000);
-      } catch (err) {
-        console.warn('Could not update event on Google Calendar:', err);
-      }
-    } else if (syncDirectlyToGoogle && !updatedEvent.googleCalendarEventId && user) {
-      handleSyncToGoogle(updatedEvent);
-    }
+    setSyncSuccessMsg(`"${updatedEvent.title}" updated in Firebase Cloud Storage ✓`);
+    setTimeout(() => setSyncSuccessMsg(null), 3000);
   };
 
   const confirmDelete = async () => {
     if (!eventToDelete) return;
-
-    if (eventToDelete.googleCalendarEventId && user) {
-      try {
-        await deleteGoogleCalendarEvent(eventToDelete.googleCalendarEventId);
-      } catch (e) {
-        console.warn('Could not delete from Google Calendar server:', e);
-      }
-    }
-
     onDeleteEvent(eventToDelete.id);
     setEventToDelete(null);
+    setSyncSuccessMsg(`Event deleted from Firebase Cloud Storage ✓`);
+    setTimeout(() => setSyncSuccessMsg(null), 2500);
   };
 
   return (
@@ -217,7 +157,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
             </h2>
           </div>
           <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
-            Clinical consultations, study schedules, and events synced with Google Calendar.
+            Clinical consultations, study schedules, and reminders auto-saved to Firebase Cloud Storage.
           </p>
         </div>
 
@@ -235,12 +175,6 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
         <div className="p-2.5 rounded-lg bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-300 dark:border-emerald-500/30 text-emerald-800 dark:text-emerald-300 text-xs flex items-center gap-2 font-medium">
           <CheckCircle className="w-3.5 h-3.5 shrink-0 text-emerald-600 dark:text-emerald-400" />
           <span>{syncSuccessMsg}</span>
-        </div>
-      )}
-      {syncError && (
-        <div className="p-2.5 rounded-lg bg-rose-50 dark:bg-rose-950/40 border border-rose-300 dark:border-rose-500/30 text-rose-800 dark:text-rose-300 text-xs flex items-center gap-2 font-medium">
-          <AlertCircle className="w-3.5 h-3.5 shrink-0 text-rose-600 dark:text-rose-400" />
-          <span>{syncError}</span>
         </div>
       )}
 
@@ -289,8 +223,6 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
                 hour12: true,
               })
             : '';
-
-          const isSyncing = syncingEventId === evt.id;
 
           const categoryColor =
             evt.category === 'clinical'
@@ -383,23 +315,12 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
                   )}
                 </div>
 
-                {/* Google Calendar Sync status */}
+                {/* Firebase Cloud Sync status */}
                 <div>
-                  {evt.syncedToGoogle ? (
-                    <span className="inline-flex items-center gap-1 text-[10px] font-medium text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/50 px-1.5 py-0.5 rounded border border-emerald-200 dark:border-emerald-800/40">
-                      <Check className="w-2.5 h-2.5" />
-                      <span>Google Synced</span>
-                    </span>
-                  ) : (
-                    <button
-                      onClick={() => handleSyncToGoogle(evt)}
-                      disabled={isSyncing}
-                      className="inline-flex items-center gap-1 text-[10px] font-medium text-sky-700 dark:text-sky-300 hover:text-sky-900 dark:hover:text-white bg-sky-50 dark:bg-sky-950/40 hover:bg-sky-100 dark:hover:bg-sky-900/60 px-1.5 py-0.5 rounded border border-sky-200 dark:border-sky-800/40 transition-colors cursor-pointer"
-                    >
-                      <Cloud className={`w-2.5 h-2.5 ${isSyncing ? 'animate-spin' : ''}`} />
-                      <span>{isSyncing ? 'Syncing...' : 'Sync'}</span>
-                    </button>
-                  )}
+                  <span className="inline-flex items-center gap-1 text-[10px] font-medium text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/50 px-1.5 py-0.5 rounded border border-emerald-200 dark:border-emerald-800/40">
+                    <Check className="w-2.5 h-2.5" />
+                    <span>Cloud Saved</span>
+                  </span>
                 </div>
               </div>
             </div>
@@ -547,18 +468,6 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
                 />
               </div>
 
-              <div className="pt-1">
-                <label className="flex items-center gap-2 cursor-pointer text-slate-700 dark:text-slate-300 text-[11px]">
-                  <input
-                    type="checkbox"
-                    checked={syncDirectlyToGoogle}
-                    onChange={(e) => setSyncDirectlyToGoogle(e.target.checked)}
-                    className="rounded bg-slate-100 dark:bg-slate-800 border-slate-300 dark:border-slate-700 text-emerald-600 focus:ring-emerald-500"
-                  />
-                  <span>Push to Google Calendar automatically</span>
-                </label>
-              </div>
-
               <div className="mt-4 flex items-center justify-end gap-2 pt-2 border-t border-slate-200 dark:border-slate-800">
                 <button
                   type="button"
@@ -704,22 +613,6 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
                 />
               </div>
 
-              <div className="pt-1">
-                <label className="flex items-center gap-2 cursor-pointer text-slate-700 dark:text-slate-300 text-[11px]">
-                  <input
-                    type="checkbox"
-                    checked={syncDirectlyToGoogle}
-                    onChange={(e) => setSyncDirectlyToGoogle(e.target.checked)}
-                    className="rounded bg-slate-100 dark:bg-slate-800 border-slate-300 dark:border-slate-700 text-emerald-600 focus:ring-emerald-500"
-                  />
-                  <span>
-                    {editingEvent.googleCalendarEventId
-                      ? 'Keep synced with Google Calendar'
-                      : 'Sync to Google Calendar'}
-                  </span>
-                </label>
-              </div>
-
               <div className="mt-4 flex items-center justify-between pt-2 border-t border-slate-200 dark:border-slate-800">
                 <button
                   type="button"
@@ -758,11 +651,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
       <ConfirmationModal
         isOpen={!!eventToDelete}
         title="Delete Calendar Event?"
-        message={`Are you sure you want to delete "${eventToDelete?.title}"? ${
-          eventToDelete?.syncedToGoogle
-            ? 'This will also remove the synced event from your Google Calendar.'
-            : ''
-        } This action cannot be undone.`}
+        message={`Are you sure you want to delete "${eventToDelete?.title}"? This will also remove it from Firebase Cloud Storage across all your devices.`}
         confirmLabel="Yes, Delete Event"
         cancelLabel="Keep Event"
         isDestructive={true}

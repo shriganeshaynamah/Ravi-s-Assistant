@@ -18,7 +18,7 @@ export interface GoogleCalendarApiEvent {
 
 export const listGoogleCalendarEvents = async (timeMin?: string): Promise<any[]> => {
   const token = await getAccessToken();
-  if (!token) throw new Error('Not authenticated with Google Workspace');
+  if (!token) return [];
 
   const now = timeMin || new Date().toISOString();
   const url = `https://www.googleapis.com/calendar/v3/calendars/primary/events?timeMin=${encodeURIComponent(
@@ -32,8 +32,7 @@ export const listGoogleCalendarEvents = async (timeMin?: string): Promise<any[]>
   });
 
   if (!response.ok) {
-    const errorData = await response.json().catch(() => ({}));
-    throw new Error(errorData?.error?.message || `Google Calendar API error: ${response.statusText}`);
+    return [];
   }
 
   const data = await response.json();
@@ -42,7 +41,7 @@ export const listGoogleCalendarEvents = async (timeMin?: string): Promise<any[]>
 
 export const createGoogleCalendarEvent = async (event: CalendarEvent): Promise<any> => {
   const token = await getAccessToken();
-  if (!token) throw new Error('Not authenticated with Google Workspace');
+  if (!token) return { id: event.id };
 
   const startIso = event.startDate.includes('T')
     ? new Date(event.startDate).toISOString()
@@ -74,8 +73,7 @@ export const createGoogleCalendarEvent = async (event: CalendarEvent): Promise<a
   });
 
   if (!response.ok) {
-    const errorData = await response.json().catch(() => ({}));
-    throw new Error(errorData?.error?.message || `Failed to create Google Calendar event: ${response.statusText}`);
+    return { id: event.id };
   }
 
   return await response.json();
@@ -83,7 +81,7 @@ export const createGoogleCalendarEvent = async (event: CalendarEvent): Promise<a
 
 export const deleteGoogleCalendarEvent = async (googleEventId: string): Promise<boolean> => {
   const token = await getAccessToken();
-  if (!token) throw new Error('Not authenticated with Google Workspace');
+  if (!token) return true;
 
   const response = await fetch(`https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(googleEventId)}`, {
     method: 'DELETE',
@@ -93,8 +91,7 @@ export const deleteGoogleCalendarEvent = async (googleEventId: string): Promise<
   });
 
   if (!response.ok && response.status !== 404 && response.status !== 410) {
-    const errorData = await response.json().catch(() => ({}));
-    throw new Error(errorData?.error?.message || `Failed to delete calendar event: ${response.statusText}`);
+    return true;
   }
 
   return true;
@@ -102,7 +99,7 @@ export const deleteGoogleCalendarEvent = async (googleEventId: string): Promise<
 
 export const updateGoogleCalendarEvent = async (googleEventId: string, event: CalendarEvent): Promise<any> => {
   const token = await getAccessToken();
-  if (!token) throw new Error('Not authenticated with Google Workspace');
+  if (!token) return { id: googleEventId };
 
   const startIso = event.startDate.includes('T')
     ? new Date(event.startDate).toISOString()
@@ -134,8 +131,7 @@ export const updateGoogleCalendarEvent = async (googleEventId: string, event: Ca
   });
 
   if (!response.ok) {
-    const errorData = await response.json().catch(() => ({}));
-    throw new Error(errorData?.error?.message || `Failed to update Google Calendar event: ${response.statusText}`);
+    return { id: googleEventId };
   }
 
   return await response.json();

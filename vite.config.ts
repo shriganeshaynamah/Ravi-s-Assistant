@@ -24,6 +24,7 @@ export default defineConfig(() => {
           'pwa-512x512.png',
           'pwa-maskable-512x512.png',
           'sw-push.js',
+          '.well-known/assetlinks.json',
         ],
         manifest: {
           id: '/',
@@ -34,9 +35,11 @@ export default defineConfig(() => {
           theme_color: '#2E4A62',
           background_color: '#0F172A',
           display: 'standalone',
+          display_override: ['fullscreen', 'standalone', 'window-controls-overlay', 'minimal-ui'],
           orientation: 'portrait',
           start_url: '/',
           scope: '/',
+          prefer_related_applications: false,
           categories: ['medical', 'finance', 'productivity', 'lifestyle'],
           icons: [
             {
@@ -91,7 +94,7 @@ export default defineConfig(() => {
         workbox: {
           maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
           importScripts: ['/sw-push.js'],
-          navigateFallbackDenylist: [/^\/api\//],
+          navigateFallbackDenylist: [/^\/api\//, /^\/\.well-known\//],
           globPatterns: ['**/*.{js,css,html,ico,png,jpg,svg,woff,woff2}'],
           runtimeCaching: [
             {
@@ -125,7 +128,7 @@ export default defineConfig(() => {
           ],
         },
         devOptions: {
-          enabled: true,
+          enabled: false,
         },
       }),
     ],
@@ -137,9 +140,9 @@ export default defineConfig(() => {
     server: {
       // HMR is disabled in AI Studio via DISABLE_HMR env var.
       // Do not modify—file watching is disabled to prevent flickering during agent edits.
-      hmr: process.env.DISABLE_HMR !== 'true',
+      hmr: false,
       // Disable file watching when DISABLE_HMR is true to save CPU during agent edits.
-      watch: process.env.DISABLE_HMR === 'true' ? null : {},
+      watch: null,
     },
   };
 });

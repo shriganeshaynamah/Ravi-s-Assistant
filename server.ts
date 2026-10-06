@@ -1,5 +1,6 @@
 import dotenv from 'dotenv';
 import express from 'express';
+import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { GoogleGenAI, Type } from '@google/genai';
@@ -217,10 +218,72 @@ Strict Instructions:
     }
   });
 
+  // Android TWA Digital Asset Links endpoint (hides Chrome URL bar inside PWABuilder APK)
+  const assetLinksPath = path.join(__dirname, 'public', '.well-known', 'assetlinks.json');
+
+  app.get('/.well-known/assetlinks.json', (_req, res) => {
+    res.setHeader('Content-Type', 'application/json');
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    try {
+      if (fs.existsSync(assetLinksPath)) {
+        const raw = fs.readFileSync(assetLinksPath, 'utf-8');
+        res.send(raw);
+        return;
+      }
+    } catch (err) {
+      console.error('Error reading assetlinks.json:', err);
+    }
+    res.json([
+      {
+        relation: ['delegate_permission/common.handle_all_urls'],
+        target: {
+          namespace: 'android_app',
+          package_name: 'app.vercel.dr_ravi_shankar_lifeos.twa',
+          sha256_cert_fingerprints: [
+            '00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00',
+          ],
+        },
+      },
+    ]);
+  });
+
+  app.post('/api/pwa/assetlinks', (req, res) => {
+    try {
+      const { packageName, sha256Fingerprint, rawJson } = req.body || {};
+      let contentToWrite = '';
+
+      if (rawJson && typeof rawJson === 'string') {
+        const parsed = JSON.parse(rawJson);
+        contentToWrite = JSON.stringify(parsed, null, 2);
+      } else if (packageName && sha256Fingerprint) {
+        const payload = [
+          {
+            relation: ['delegate_permission/common.handle_all_urls'],
+            target: {
+              namespace: 'android_app',
+              package_name: String(packageName).trim(),
+              sha256_cert_fingerprints: [String(sha256Fingerprint).trim().toUpperCase()],
+            },
+          },
+        ];
+        contentToWrite = JSON.stringify(payload, null, 2);
+      } else {
+        res.status(400).json({ error: 'packageName and sha256Fingerprint are required' });
+        return;
+      }
+
+      fs.mkdirSync(path.dirname(assetLinksPath), { recursive: true });
+      fs.writeFileSync(assetLinksPath, contentToWrite, 'utf-8');
+      res.json({ ok: true, assetLinks: JSON.parse(contentToWrite) });
+    } catch (err: any) {
+      res.status(400).json({ error: err?.message || 'Invalid assetlinks configuration' });
+    }
+  });
+
   if (process.env.NODE_ENV !== 'production') {
     const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: { middlewareMode: true, hmr: false, watch: null },
       appType: 'spa',
     });
     app.use(vite.middlewares);

@@ -27,7 +27,16 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('fetch', (event) => {
   if (event.request.method !== 'GET') return;
   const url = new URL(event.request.url);
-  if (url.pathname.startsWith('/api/')) return;
+  if (url.origin !== self.location.origin) return;
+  if (
+    url.pathname.startsWith('/api/') ||
+    url.pathname.startsWith('/.well-known/') ||
+    url.pathname.startsWith('/@') ||
+    url.pathname.startsWith('/src/') ||
+    url.pathname.startsWith('/node_modules/')
+  ) {
+    return;
+  }
 
   event.respondWith(
     fetch(event.request)

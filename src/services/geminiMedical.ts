@@ -1237,31 +1237,20 @@ Return ONLY raw valid JSON.`;
           const dName = query.diseaseName || parsed.ayurvedicAnalysis.vyadhiVinischaya;
           const acharyaMap = getAcharyaProtocols(dName, parsed.ayurvedicAnalysis);
           parsed.ayurvedicAnalysis.acharyaProtocols = acharyaMap;
-          const primaryProto = acharyaMap.charaka?.isDirectlyMentioned
-            ? acharyaMap.charaka
-            : acharyaMap.chakradatta || acharyaMap.charaka;
-          if (primaryProto && primaryProto.shlokaReference?.shlokaSanskrit && primaryProto.shlokaReference.shlokaSanskrit !== 'NA') {
-            parsed.ayurvedicAnalysis.shlokaReference = primaryProto.shlokaReference;
-            parsed.ayurvedicAnalysis.chikitsaSutra = primaryProto.chikitsaSutra;
-            if (primaryProto.shamanaChikitsa?.length > 0) {
-              parsed.ayurvedicAnalysis.shamanaChikitsa = primaryProto.shamanaChikitsa;
-            }
-            if (primaryProto.shodhanaChikitsa?.length > 0) {
-              parsed.ayurvedicAnalysis.shodhanaChikitsa = primaryProto.shodhanaChikitsa;
-            }
-          }
-          const modernPharm = getModernPharmacologyForDisease(dName, query.symptoms || '');
-          parsed.modernMedicineAnalysis.pharmacotherapyStandard = modernPharm.pharmacotherapyStandard;
-          parsed.modernMedicineAnalysis.pathophysiologySummary = modernPharm.pathophysiologySummary;
-          parsed.modernMedicineAnalysis.textbookReferences = modernPharm.textbookReferences;
 
-          // Always use the curated disease-specific differential diagnosis & Prashna Pariksha questions
-          // so Quick Fill options match 100% both BEFORE and AFTER clicking Submit Patient Answers!
-          parsed.differentialDiagnosis = baseline.differentialDiagnosis;
-          if (query.prashnaAnswers && query.prashnaAnswers.length > 0) {
-            parsed.ayurvedicAnalysis.vyadhiVinischaya = baseline.ayurvedicAnalysis.vyadhiVinischaya;
-            parsed.ayurvedicAnalysis.doshaDushya.agni = baseline.ayurvedicAnalysis.doshaDushya.agni;
-            parsed.doctorVerificationSummary = baseline.doctorVerificationSummary;
+          // Only use preset fallbacks if AI returned empty arrays/fields
+          if (!parsed.ayurvedicAnalysis.shamanaChikitsa?.length) {
+            parsed.ayurvedicAnalysis.shamanaChikitsa = baseline.ayurvedicAnalysis.shamanaChikitsa;
+          }
+          if (!parsed.ayurvedicAnalysis.shodhanaChikitsa?.length) {
+            parsed.ayurvedicAnalysis.shodhanaChikitsa = baseline.ayurvedicAnalysis.shodhanaChikitsa;
+          }
+          if (!parsed.modernMedicineAnalysis.pharmacotherapyStandard?.length) {
+            parsed.modernMedicineAnalysis.pharmacotherapyStandard =
+              baseline.modernMedicineAnalysis.pharmacotherapyStandard;
+          }
+          if (!parsed.differentialDiagnosis || !parsed.differentialDiagnosis.competingConditions?.length) {
+            parsed.differentialDiagnosis = baseline.differentialDiagnosis;
           }
           return parsed;
         }

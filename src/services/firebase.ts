@@ -145,9 +145,18 @@ export const getSavedUser = (): User | null => {
         } as unknown as User;
       }
     }
-    return null;
+    if (localStorage.getItem('ayurlife_explicit_logged_out') === '1') {
+      return null;
+    }
+    return savePermanentUserEmail(DEFAULT_OWNER_EMAIL, DEFAULT_OWNER_NAME);
   } catch {
-    return null;
+    return {
+      uid: `perm-${DEFAULT_OWNER_EMAIL}`,
+      email: DEFAULT_OWNER_EMAIL,
+      displayName: DEFAULT_OWNER_NAME,
+      photoURL: null,
+      emailVerified: true,
+    } as unknown as User;
   }
 };
 
@@ -171,6 +180,7 @@ export const savePermanentUserEmail = (
   };
   try {
     const profileJson = JSON.stringify(profile);
+    localStorage.removeItem('ayurlife_explicit_logged_out');
     localStorage.setItem(USER_EMAIL_KEY, cleanEmail);
     localStorage.setItem(SAVED_USER_PROFILE_KEY, profileJson);
     writeToIDB(USER_EMAIL_KEY, cleanEmail);
@@ -335,6 +345,7 @@ export const logout = async () => {
   } catch {}
   cachedAccessToken = null;
   try {
+    localStorage.setItem('ayurlife_explicit_logged_out', '1');
     localStorage.removeItem(TOKEN_STORAGE_KEY);
     localStorage.removeItem(SAVED_USER_PROFILE_KEY);
     localStorage.removeItem(USER_EMAIL_KEY);

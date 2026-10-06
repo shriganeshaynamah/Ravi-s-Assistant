@@ -2,8 +2,6 @@ import React, { useState } from 'react';
 import type { User } from 'firebase/auth';
 import {
   Cloud,
-  HardDrive,
-  Calendar,
   CheckCircle,
   AlertCircle,
   Download,
@@ -16,8 +14,6 @@ import {
   Database,
   Mail,
 } from 'lucide-react';
-import { uploadBackupToGoogleDrive } from '../services/googleDrive';
-import { createGoogleCalendarEvent } from '../services/googleCalendar';
 import {
   googleSignIn,
   savePermanentUserEmail,
@@ -49,17 +45,9 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
   onUserChange,
   getAllData,
   onRestoreData,
-  events,
-  onUpdateEvent,
   isDark = true,
 }) => {
-  const [isDriveBackingUp, setIsDriveBackingUp] = useState(false);
-  const [driveResult, setDriveResult] = useState<{ id: string; name: string; link?: string } | null>(
-    null
-  );
-
   const [isFirebaseSyncing, setIsFirebaseSyncing] = useState(false);
-  const [isCalendarSyncing, setIsCalendarSyncing] = useState(false);
 
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
@@ -146,72 +134,6 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
     }
   };
 
-  const handleDriveBackup = async () => {
-    if (!isConnected) {
-      setErrorMessage('Please connect your Gmail account first.');
-      return;
-    }
-
-    setIsDriveBackingUp(true);
-    setErrorMessage(null);
-    setSuccessMessage(null);
-
-    try {
-      const fullData = getAllData();
-      const todayStr = new Date().toISOString().split('T')[0];
-      const fileName = `Dr_Ravi_Shankar_LifeOS_Backup_${todayStr}.json`;
-
-      const res = await uploadBackupToGoogleDrive(fileName, fullData);
-      setDriveResult(res);
-      setSuccessMessage('Full Life OS backup saved to your Google Drive successfully!');
-    } catch (err: any) {
-      console.error(err);
-      setErrorMessage(err.message || 'Failed to save to Google Drive');
-    } finally {
-      setIsDriveBackingUp(false);
-    }
-  };
-
-  const handleCalendarSyncAll = async () => {
-    if (!isConnected) {
-      setErrorMessage('Please connect your Gmail account first.');
-      return;
-    }
-
-    setIsCalendarSyncing(true);
-    setErrorMessage(null);
-    setSuccessMessage(null);
-
-    try {
-      let count = 0;
-      for (const evt of events) {
-        if (!evt.syncedToGoogle) {
-          try {
-            const gEvt = await createGoogleCalendarEvent(evt);
-            onUpdateEvent({
-              ...evt,
-              googleCalendarEventId: gEvt.id,
-              syncedToGoogle: true,
-            });
-            count++;
-          } catch (e) {
-            console.warn(`Failed to sync event ${evt.title}:`, e);
-          }
-        }
-      }
-      setSuccessMessage(
-        count > 0
-          ? `Successfully synced ${count} new events to Google Calendar!`
-          : 'All active events are already synced to your Google Calendar.'
-      );
-    } catch (err: any) {
-      console.error(err);
-      setErrorMessage(err.message || 'Failed to sync to Google Calendar');
-    } finally {
-      setIsCalendarSyncing(false);
-    }
-  };
-
   const handleExportLocalJson = () => {
     const data = getAllData();
     const jsonStr = JSON.stringify(data, null, 2);
@@ -261,7 +183,7 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
                 Cloud Sync
               </h3>
               <p className="text-xs text-slate-600 dark:text-slate-400">
-                Real-time Cloud Storage auto-sync across all devices, plus Google Drive &amp; Calendar.
+                Real-time Firebase Cloud Storage auto-sync across all your devices.
               </p>
             </div>
           </div>
@@ -320,7 +242,7 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
                 </div>
                 <p className="text-[11px] text-slate-600 dark:text-slate-400 mt-0.5">
                   {isConnected
-                    ? 'Logged in permanently across Website, Vercel & Android APK. You will not be asked every time.'
+                    ? 'Logged in permanently across Website, Vercel & Android App. All data auto-saves to Firebase Cloud.'
                     : 'Connect your Gmail once below. It stays saved permanently so you won’t be asked every time.'}
                 </p>
               </div>
@@ -402,7 +324,7 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
                   </span>
                 </div>
                 <p className="text-[11px] text-slate-600 dark:text-slate-400 mt-0.5 leading-relaxed">
-                  Automatically saves every change in Expenses, Loans, Investments, Keep To-Do, Notes, Roadmap, Calendar, Habits, Dinacharya &amp; Journal directly to Firebase Cloud Firestore across all your devices.
+                  Automatically saves every change in Expenses, Loans, Investments, Keep To-Do, Notes, Roadmap, Calendar &amp; Events, Habits, Dinacharya &amp; Journal directly to Firebase Cloud Firestore across all your devices.
                 </p>
               </div>
             </div>
@@ -414,71 +336,6 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
             >
               <RefreshCw className={`w-3.5 h-3.5 ${isFirebaseSyncing ? 'animate-spin' : ''}`} />
               <span>{isFirebaseSyncing ? 'Syncing...' : 'Sync Now'}</span>
-            </button>
-          </div>
-
-          {/* Item 2: Google Drive */}
-          <div
-            className={`p-4 rounded-2xl border flex flex-col sm:flex-row sm:items-center justify-between gap-4 ${
-              isDark ? 'bg-slate-800/60 border-slate-700/60' : 'bg-white border-slate-200 shadow-2xs'
-            }`}
-          >
-            <div className="flex items-start gap-3">
-              <div className="p-2 rounded-xl bg-blue-500/20 text-blue-600 dark:text-blue-400 mt-0.5">
-                <HardDrive className="w-5 h-5" />
-              </div>
-              <div>
-                <h4 className="text-xs font-bold text-slate-900 dark:text-white">
-                  Save Full Backup to Google Drive
-                </h4>
-                <p className="text-[11px] text-slate-600 dark:text-slate-400 mt-0.5 leading-relaxed">
-                  Archives all notes, roadmaps, patient appointments, and financial records into a secure JSON file in your Google Drive.
-                </p>
-                {driveResult && (
-                  <p className="text-[10px] text-emerald-600 dark:text-emerald-400 font-mono mt-1 font-bold">
-                    ✓ Saved: {driveResult.name}
-                  </p>
-                )}
-              </div>
-            </div>
-
-            <button
-              onClick={handleDriveBackup}
-              disabled={isDriveBackingUp}
-              className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-bold text-xs flex items-center justify-center gap-1.5 shrink-0 shadow-md shadow-blue-950/20 cursor-pointer"
-            >
-              <Cloud className={`w-3.5 h-3.5 ${isDriveBackingUp ? 'animate-spin' : ''}`} />
-              <span>{isDriveBackingUp ? 'Backing Up...' : 'Backup to Drive'}</span>
-            </button>
-          </div>
-
-          {/* Item 3: Google Calendar */}
-          <div
-            className={`p-4 rounded-2xl border flex flex-col sm:flex-row sm:items-center justify-between gap-4 ${
-              isDark ? 'bg-slate-800/60 border-slate-700/60' : 'bg-white border-slate-200 shadow-2xs'
-            }`}
-          >
-            <div className="flex items-start gap-3">
-              <div className="p-2 rounded-xl bg-amber-500/20 text-amber-600 dark:text-amber-400 mt-0.5">
-                <Calendar className="w-5 h-5" />
-              </div>
-              <div>
-                <h4 className="text-xs font-bold text-slate-900 dark:text-white">
-                  Sync Upcoming Events to Google Calendar
-                </h4>
-                <p className="text-[11px] text-slate-600 dark:text-slate-400 mt-0.5 leading-relaxed">
-                  Pushes all unsynced OPD consultations, study sessions and reminders to your primary Google Calendar.
-                </p>
-              </div>
-            </div>
-
-            <button
-              onClick={handleCalendarSyncAll}
-              disabled={isCalendarSyncing}
-              className="px-4 py-2 rounded-xl bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white font-bold text-xs flex items-center justify-center gap-1.5 shrink-0 shadow-md shadow-amber-950/20 cursor-pointer"
-            >
-              <RefreshCw className={`w-3.5 h-3.5 ${isCalendarSyncing ? 'animate-spin' : ''}`} />
-              <span>{isCalendarSyncing ? 'Syncing...' : 'Sync All to Calendar'}</span>
             </button>
           </div>
         </div>
