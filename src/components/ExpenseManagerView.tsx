@@ -7,9 +7,7 @@ import {
   Plus,
   Trash2,
   Edit2,
-  FileSpreadsheet,
   Calculator,
-  ExternalLink,
   PieChart,
   BarChart2,
   Calendar,
@@ -29,14 +27,6 @@ import {
   Info,
   Sparkles,
 } from 'lucide-react';
-import {
-  exportMultiSectionToGoogleSheets,
-  exportExpensesToGoogleSheets,
-  MASTER_SHEET_KEY,
-  getMasterSpreadsheetUrl,
-  getMonthly5thAutoSyncStatus,
-  checkAndRunMonthly5thSheetAutoSync,
-} from '../services/googleSheets';
 import {
   getAllArchivedAndCurrentExpenses,
   syncExpensesToMonthlyArchive,
@@ -60,7 +50,6 @@ interface ExpenseManagerViewProps {
   onDeleteInvestment: (id: string) => void;
   user: User | null;
   onRequireAuth: () => void;
-  onFetchFromSheet?: () => Promise<boolean>;
   isDark: boolean;
   initialTab?: 'expenses' | 'loans' | 'investments';
 }
@@ -79,7 +68,6 @@ export const ExpenseManagerView: React.FC<ExpenseManagerViewProps> = ({
   onDeleteInvestment,
   user,
   onRequireAuth,
-  onFetchFromSheet,
   isDark,
   initialTab,
 }) => {
@@ -227,30 +215,10 @@ export const ExpenseManagerView: React.FC<ExpenseManagerViewProps> = ({
   const [calcSipRate, setCalcSipRate] = useState<number>(13.5);
   const [calcSipYears, setCalcSipYears] = useState<number>(5);
 
-  // Google Sheets Export
-  const [isExporting, setIsExporting] = useState(false);
-  const [exportedSheetUrl, setExportedSheetUrl] = useState<string | null>(() => getMasterSpreadsheetUrl());
-  const [monthly5thStatus, setMonthly5thStatus] = useState(() => getMonthly5thAutoSyncStatus());
-
-  // Permanently sync current expenses into the multi-month archive and load all historical + current expenses
+  // Load all historical + current expenses directly from authoritative state
   const allHistoricalAndCurrentExpenses = useMemo(() => {
-    syncExpensesToMonthlyArchive(expenses);
     return getAllArchivedAndCurrentExpenses(expenses);
   }, [expenses]);
-
-  // Auto-update to Google Sheet every 5th of the month
-  useEffect(() => {
-    checkAndRunMonthly5thSheetAutoSync({
-      expenses: allHistoricalAndCurrentExpenses,
-      investments,
-      loans,
-    }).then((res) => {
-      if (res.synced && res.spreadsheetUrl) {
-        setExportedSheetUrl(res.spreadsheetUrl);
-        setMonthly5thStatus(getMonthly5thAutoSyncStatus());
-      }
-    });
-  }, [allHistoricalAndCurrentExpenses, investments, loans]);
 
   // Helper to select a specific month (YYYY-MM) for Expense Analysis
   const handleSelectAnalysisMonth = (ym: string) => {
@@ -519,70 +487,15 @@ export const ExpenseManagerView: React.FC<ExpenseManagerViewProps> = ({
 
   const [isClearAllExpensesOpen, setIsClearAllExpensesOpen] = useState(false);
   const [isClearAllInvestmentsOpen, setIsClearAllInvestmentsOpen] = useState(false);
-  const [isFetchingSheet, setIsFetchingSheet] = useState(false);
-
-  const handleFetchFromSheets = async () => {
-    if (!user) {
-      onRequireAuth();
-      return;
-    }
-    if (!onFetchFromSheet) return;
-    setIsFetchingSheet(true);
-    try {
-      await onFetchFromSheet();
-      const url = getMasterSpreadsheetUrl();
-      if (url) setExportedSheetUrl(url);
-      setMonthly5thStatus(getMonthly5thAutoSyncStatus());
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setIsFetchingSheet(false);
-    }
-  };
-
-  const handleExportSheets = async () => {
-    if (!user) {
-      onRequireAuth();
-      return;
-    }
-    setIsExporting(true);
-    try {
-      const res = await exportMultiSectionToGoogleSheets({
-        expenses: allHistoricalAndCurrentExpenses,
-        investments,
-        loans,
-      });
-      setExportedSheetUrl(res.spreadsheetUrl);
-      setMonthly5thStatus(getMonthly5thAutoSyncStatus());
-    } catch (err: any) {
-      console.error(err);
-    } finally {
-      setIsExporting(false);
-    }
-  };
 
   const handleConfirmClearAllExpenses = () => {
     clearAllMonthlyArchivedExpenses();
     expenses.forEach((e) => onDeleteExpense(e.id));
-    if (user && localStorage.getItem(MASTER_SHEET_KEY)) {
-      exportMultiSectionToGoogleSheets({
-        expenses: [],
-        investments,
-        loans,
-      }).catch(() => {});
-    }
     setIsClearAllExpensesOpen(false);
   };
 
   const handleConfirmClearAllInvestments = () => {
     investments.forEach((inv) => onDeleteInvestment(inv.id));
-    if (user && localStorage.getItem(MASTER_SHEET_KEY)) {
-      exportMultiSectionToGoogleSheets({
-        expenses,
-        investments: [],
-        loans,
-      }).catch(() => {});
-    }
     setIsClearAllInvestmentsOpen(false);
   };
 
@@ -1022,45 +935,7 @@ export const ExpenseManagerView: React.FC<ExpenseManagerViewProps> = ({
             Daily transactions, loan EMI schedules &amp; wealth growth
           </p>
         </div>
-
-        <div className="flex items-center gap-1.5">
-          {onFetchFromSheet && (
-            <button
-              onClick={handleFetchFromSheets}
-              disabled={isFetchingSheet}
-              className="px-2.5 py-1.5 rounded-lg bg-sky-500/10 hover:bg-sky-500/20 text-sky-600 dark:text-sky-400 border border-sky-500/20 text-[11px] font-semibold flex items-center gap-1.5 cursor-pointer shadow-2xs transition-colors"
-              title="Pull latest changes from Google Sheet into App"
-            >
-              <FileSpreadsheet className={`w-3.5 h-3.5 ${isFetchingSheet ? 'animate-spin' : ''}`} />
-              <span className="hidden sm:inline">{isFetchingSheet ? 'Fetching...' : 'Pull Sheet'}</span>
-            </button>
-          )}
-          <button
-            onClick={handleExportSheets}
-            disabled={isExporting}
-            className="px-2.5 py-1.5 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 text-[11px] font-semibold flex items-center gap-1.5 cursor-pointer shadow-2xs transition-colors"
-            title="Save & Sync to Master Google Sheet (2-Way Auto-Save Active)"
-          >
-            <FileSpreadsheet className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">{isExporting ? 'Syncing...' : 'Sync Sheet'}</span>
-          </button>
-        </div>
       </div>
-
-      {exportedSheetUrl && (
-        <div className="p-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-700 dark:text-emerald-300 text-xs flex items-center justify-between gap-2">
-          <span>Synced! Section pages updated &amp; deleted items erased from sheet.</span>
-          <a
-            href={exportedSheetUrl}
-            target="_blank"
-            rel="noreferrer"
-            className="font-bold underline flex items-center gap-1"
-          >
-            <span>Open Sheet</span>
-            <ExternalLink className="w-3 h-3" />
-          </a>
-        </div>
-      )}
 
       {/* 3 Main Sub-Tabs: Daily Expenses | Loans | Investment & Sip */}
       <div className="flex rounded-xl p-0.5 bg-slate-200 dark:bg-slate-800 text-[11px] font-semibold">
@@ -1312,18 +1187,13 @@ export const ExpenseManagerView: React.FC<ExpenseManagerViewProps> = ({
                   </button>
                 </div>
 
-                {/* Auto-Update Every 5th of Month Info Banner */}
+                {/* Auto-Save Info Banner */}
                 <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-purple-200/60 dark:border-purple-800/40 text-[10px]">
                   <span className="text-purple-800 dark:text-purple-300 font-semibold flex items-center gap-1">
                     <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 shrink-0" />
                     <span>
-                      All previous months’ expenses are permanently stored &amp; auto-updated to the same Master Google Sheet every 5th of the month.
+                      All previous months’ expenses are permanently stored &amp; auto-synced to Firebase Cloud Storage across all devices.
                     </span>
-                  </span>
-                  <span className="font-mono font-bold text-slate-600 dark:text-slate-400">
-                    {monthly5thStatus.isCurrentMonthSynced
-                      ? `Synced for ${monthly5thStatus.lastSyncedMonth}`
-                      : `Next Auto-Sync: ${monthly5thStatus.nextSyncLabel}`}
                   </span>
                 </div>
               </div>
@@ -3298,12 +3168,15 @@ export const ExpenseManagerView: React.FC<ExpenseManagerViewProps> = ({
                   <select
                     value={invCategory}
                     onChange={(e) => setInvCategory(e.target.value as any)}
-                    className="w-full p-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-white capitalize"
+                    className="w-full p-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-white"
                   >
+                    <option value="stable_money_fd">Stable Money FD (8.50% p.a.)</option>
+                    <option value="fixed_deposit">Bank Fixed Deposit (FD)</option>
+                    <option value="recurring_deposit">Recurring Deposit (RD)</option>
                     <option value="mutual_fund">Mutual Fund (SIP)</option>
+                    <option value="bonds">Bonds / NCDs (8% - 10.5%)</option>
+                    <option value="gold_sgb">Sovereign Gold (SGB / ETF)</option>
                     <option value="stock">Equity Stocks</option>
-                    <option value="gold_sgb">Sovereign Gold (SGB)</option>
-                    <option value="fixed_deposit">Fixed Deposit</option>
                     <option value="other">Other Asset</option>
                   </select>
                 </div>
@@ -3584,20 +3457,12 @@ export const ExpenseManagerView: React.FC<ExpenseManagerViewProps> = ({
       <ConfirmationModal
         isOpen={!!expenseToDelete}
         title="Delete Transaction?"
-        message={`Delete "${expenseToDelete?.description}" of ₹${expenseToDelete?.amount}? This will also erase it from your synced Google Sheet.`}
+        message={`Delete "${expenseToDelete?.description}" of ₹${expenseToDelete?.amount}? This will also update your Cloud Sync storage.`}
         confirmLabel="Delete"
         onConfirm={() => {
           if (expenseToDelete) {
             removeExpenseFromMonthlyArchive(expenseToDelete.id);
-            const nextExpenses = allHistoricalAndCurrentExpenses.filter((e) => e.id !== expenseToDelete.id);
             onDeleteExpense(expenseToDelete.id);
-            if (user && localStorage.getItem(MASTER_SHEET_KEY)) {
-              exportMultiSectionToGoogleSheets({
-                expenses: nextExpenses,
-                investments,
-                loans,
-              }).catch(() => {});
-            }
           }
           setExpenseToDelete(null);
         }}
@@ -3607,19 +3472,11 @@ export const ExpenseManagerView: React.FC<ExpenseManagerViewProps> = ({
       <ConfirmationModal
         isOpen={!!loanToDelete}
         title="Delete Loan?"
-        message={`Are you sure you want to delete "${loanToDelete?.title}" from loans? This will also erase it from your synced Google Sheet.`}
+        message={`Are you sure you want to delete "${loanToDelete?.title}" from loans? This will also update your Cloud Sync storage.`}
         confirmLabel="Delete Loan"
         onConfirm={() => {
           if (loanToDelete) {
-            const nextLoans = loans.filter((l) => l.id !== loanToDelete.id);
             onDeleteLoan(loanToDelete.id);
-            if (user && localStorage.getItem(MASTER_SHEET_KEY)) {
-              exportMultiSectionToGoogleSheets({
-                expenses,
-                investments,
-                loans: nextLoans,
-              }).catch(() => {});
-            }
           }
           setLoanToDelete(null);
         }}
@@ -3629,19 +3486,11 @@ export const ExpenseManagerView: React.FC<ExpenseManagerViewProps> = ({
       <ConfirmationModal
         isOpen={!!investmentToDelete}
         title="Delete Investment?"
-        message={`Are you sure you want to delete "${investmentToDelete?.title}" from investments? This will also erase it from your synced Google Sheet.`}
+        message={`Are you sure you want to delete "${investmentToDelete?.title}" from investments? This will also update your Cloud Sync storage.`}
         confirmLabel="Delete Asset"
         onConfirm={() => {
           if (investmentToDelete) {
-            const nextInvestments = investments.filter((i) => i.id !== investmentToDelete.id);
             onDeleteInvestment(investmentToDelete.id);
-            if (user && localStorage.getItem(MASTER_SHEET_KEY)) {
-              exportMultiSectionToGoogleSheets({
-                expenses,
-                investments: nextInvestments,
-                loans,
-              }).catch(() => {});
-            }
           }
           setInvestmentToDelete(null);
         }}
@@ -3652,7 +3501,7 @@ export const ExpenseManagerView: React.FC<ExpenseManagerViewProps> = ({
       <ConfirmationModal
         isOpen={isClearAllExpensesOpen}
         title="Clear All Daily Expenses?"
-        message="Are you sure you want to clear all daily expense records? This will delete all expense items from the website and erase all rows on your Google Sheet."
+        message="Are you sure you want to clear all daily expense records? This will delete all expense items and update your Cloud Sync storage."
         confirmLabel="Yes, Clear All Expenses"
         cancelLabel="Cancel"
         isDestructive={true}
@@ -3664,7 +3513,7 @@ export const ExpenseManagerView: React.FC<ExpenseManagerViewProps> = ({
       <ConfirmationModal
         isOpen={isClearAllInvestmentsOpen}
         title="Clear All Investments?"
-        message="Are you sure you want to clear all investment records? This will delete all investment items from the website and erase all rows on your Google Sheet."
+        message="Are you sure you want to clear all investment records? This will delete all investment items and update your Cloud Sync storage."
         confirmLabel="Yes, Clear All Investments"
         cancelLabel="Cancel"
         isDestructive={true}

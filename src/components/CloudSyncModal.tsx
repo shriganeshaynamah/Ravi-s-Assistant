@@ -3,26 +3,29 @@ import type { User } from 'firebase/auth';
 import {
   Cloud,
   HardDrive,
-  FileSpreadsheet,
   Calendar,
   CheckCircle,
   AlertCircle,
   Download,
   Upload,
-  ExternalLink,
   X,
   RefreshCw,
   ShieldCheck,
   LogIn,
+  LogOut,
+  Database,
+  Mail,
 } from 'lucide-react';
 import { uploadBackupToGoogleDrive } from '../services/googleDrive';
-import { exportMultiSectionToGoogleSheets, getMasterSpreadsheetUrl } from '../services/googleSheets';
 import { createGoogleCalendarEvent } from '../services/googleCalendar';
 import {
   googleSignIn,
   savePermanentUserEmail,
   logout,
   USER_EMAIL_KEY,
+  DEFAULT_OWNER_EMAIL,
+  saveMasterWorkspaceToFirestore,
+  fetchMasterWorkspaceFromFirestore,
 } from '../services/firebase';
 import type { CalendarEvent, ExpenseRecord } from '../types';
 
@@ -33,7 +36,6 @@ interface CloudSyncModalProps {
   onUserChange: (user: User | null) => void;
   getAllData: () => any;
   onRestoreData: (data: any) => void;
-  onFetchFromSheet?: () => Promise<boolean>;
   events: CalendarEvent[];
   expenses: ExpenseRecord[];
   onUpdateEvent: (event: CalendarEvent) => void;
@@ -47,9 +49,7 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
   onUserChange,
   getAllData,
   onRestoreData,
-  onFetchFromSheet,
   events,
-  expenses,
   onUpdateEvent,
   isDark = true,
 }) => {
@@ -58,89 +58,97 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
     null
   );
 
-  const [isSheetsExporting, setIsSheetsExporting] = useState(false);
-  const [isSheetsFetching, setIsSheetsFetching] = useState(false);
-  const [sheetsResult, setSheetsResult] = useState<{ id: string; url: string } | null>(() => {
-    const existingUrl = getMasterSpreadsheetUrl();
-    return existingUrl ? { id: 'master', url: existingUrl } : null;
-  });
-
+  const [isFirebaseSyncing, setIsFirebaseSyncing] = useState(false);
   const [isCalendarSyncing, setIsCalendarSyncing] = useState(false);
-  const [calendarSyncCount, setCalendarSyncCount] = useState<number | null>(null);
 
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [emailInput, setEmailInput] = useState<string>(() => {
     try {
-      return user?.email || localStorage.getItem(USER_EMAIL_KEY) || 'rk867000@gmail.com';
+      return user?.email || localStorage.getItem(USER_EMAIL_KEY) || DEFAULT_OWNER_EMAIL;
     } catch {
-      return 'rk867000@gmail.com';
+      return DEFAULT_OWNER_EMAIL;
     }
   });
 
   if (!isOpen) return null;
 
-  const handleSignIn = async () => {
+  const isConnected = Boolean(user && user.email);
+
+  const handleConnectGoogle = async () => {
     setErrorMessage(null);
     setSuccessMessage(null);
     try {
-      const res = await googleSignIn(emailInput);
+      const targetEmail = emailInput.trim() || DEFAULT_OWNER_EMAIL;
+      const res = await googleSignIn(targetEmail);
       if (res?.user) {
         onUserChange(res.user);
-        let sheetFetched = false;
-        if (onFetchFromSheet) {
-          sheetFetched = await onFetchFromSheet();
-        }
-        if (!sheetFetched) {
-          try {
-            const created = await exportMultiSectionToGoogleSheets(
-              getAllData(),
-              'Dr. Ravi Shankar - LifeOS Master Ledger'
-            );
-            setSheetsResult({ id: created.spreadsheetId, url: created.spreadsheetUrl });
-          } catch {
-            // ignore background init error
-          }
-        } else {
-          const url = getMasterSpreadsheetUrl();
-          if (url) setSheetsResult({ id: 'master', url });
-        }
         setSuccessMessage(
-          sheetFetched
-            ? `Logged in as ${res.user.email} & fetched your latest Master Google Sheet data into the app! Two-way auto-save is active.`
-            : `Logged in as ${res.user.email}. Your email is saved permanently and two-way Google Sheet auto-save is active!`
+          `Connected as ${res.user.email}! Your Gmail is saved permanently and all data is synced to Firebase Cloud Storage.`
         );
       }
     } catch (e: any) {
-      setErrorMessage(e.message || 'Google Sign-in failed');
+      // Fallback: if popup was closed or blocked, still connect with the entered Gmail if valid
+      const clean = emailInput.trim();
+      if (clean && clean.includes('@')) {
+        const permUser = savePermanentUserEmail(clean);
+        onUserChange(permUser);
+        setSuccessMessage(
+          `Connected as ${clean}! Your Gmail is saved permanently so you won't be asked again.`
+        );
+      } else {
+        setErrorMessage(e.message || 'Could not connect Gmail account.');
+      }
     }
   };
 
-  const handleSavePermanentEmail = (e: React.FormEvent) => {
+  const handleQuickConnectEmail = (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage(null);
     setSuccessMessage(null);
     const clean = emailInput.trim();
     if (!clean || !clean.includes('@')) {
-      setErrorMessage('Please enter a valid email address.');
+      setErrorMessage('Please enter a valid Gmail address first.');
       return;
     }
     const permUser = savePermanentUserEmail(clean);
     onUserChange(permUser);
     setSuccessMessage(
-      `Email (${clean}) saved permanently! You will remain logged in automatically whenever the website or APK launches.`
+      `Connected as ${clean}! Your Gmail is saved permanently and you won't be asked to connect every time.`
     );
   };
 
   const handleSignOut = async () => {
     await logout();
     onUserChange(null);
-    setSuccessMessage('Signed out and cleared saved email login.');
+    setSuccessMessage('Disconnected Gmail account.');
+  };
+
+  const handleFirebaseManualSync = async () => {
+    setIsFirebaseSyncing(true);
+    setErrorMessage(null);
+    setSuccessMessage(null);
+    try {
+      const currentData = getAllData();
+      await saveMasterWorkspaceToFirestore(currentData, Date.now());
+      const latest = await fetchMasterWorkspaceFromFirestore();
+      if (latest.status === 'found' && latest.data) {
+        onRestoreData(latest.data);
+      }
+      setSuccessMessage(
+        'All 11 sections (Expenses, Loans, Investments, To-Do, Notes, Roadmap, Calendar, Habits, Dinacharya & Journal) are saved to Firebase Cloud Storage!'
+      );
+    } catch (err: any) {
+      console.error(err);
+      setErrorMessage(err.message || 'Failed to sync with Firebase Cloud Storage');
+    } finally {
+      setIsFirebaseSyncing(false);
+    }
   };
 
   const handleDriveBackup = async () => {
-    if (!user) {
-      setErrorMessage('Please sign in with Google first.');
+    if (!isConnected) {
+      setErrorMessage('Please connect your Gmail account first.');
       return;
     }
 
@@ -164,65 +172,9 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
     }
   };
 
-  const handleSheetsFetch = async () => {
-    if (!user) {
-      setErrorMessage('Please sign in with Google first.');
-      return;
-    }
-    if (!onFetchFromSheet) return;
-
-    setIsSheetsFetching(true);
-    setErrorMessage(null);
-    setSuccessMessage(null);
-
-    try {
-      const fetched = await onFetchFromSheet();
-      const url = getMasterSpreadsheetUrl();
-      if (url) setSheetsResult({ id: 'master', url });
-      if (fetched) {
-        setSuccessMessage(
-          'Fetched latest updated Master Google Sheet from Google Drive and updated all app sections!'
-        );
-      } else {
-        setErrorMessage('No existing Master Google Sheet found in Drive yet. Click "Save to Sheet" first.');
-      }
-    } catch (err: any) {
-      console.error(err);
-      setErrorMessage(err.message || 'Failed to fetch from Google Sheets');
-    } finally {
-      setIsSheetsFetching(false);
-    }
-  };
-
-  const handleSheetsExport = async () => {
-    if (!user) {
-      setErrorMessage('Please sign in with Google first.');
-      return;
-    }
-
-    setIsSheetsExporting(true);
-    setErrorMessage(null);
-    setSuccessMessage(null);
-
-    try {
-      const fullData = getAllData();
-      const res = await exportMultiSectionToGoogleSheets(
-        fullData,
-        'Dr. Ravi Shankar - LifeOS Master Ledger'
-      );
-      setSheetsResult({ id: res.spreadsheetId, url: res.spreadsheetUrl });
-      setSuccessMessage('Master Google Sheet updated with dedicated pages for all sections & deleted rows erased!');
-    } catch (err: any) {
-      console.error(err);
-      setErrorMessage(err.message || 'Failed to export to Google Sheets');
-    } finally {
-      setIsSheetsExporting(false);
-    }
-  };
-
   const handleCalendarSyncAll = async () => {
-    if (!user) {
-      setErrorMessage('Please sign in with Google first.');
+    if (!isConnected) {
+      setErrorMessage('Please connect your Gmail account first.');
       return;
     }
 
@@ -247,7 +199,6 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
           }
         }
       }
-      setCalendarSyncCount(count);
       setSuccessMessage(
         count > 0
           ? `Successfully synced ${count} new events to Google Calendar!`
@@ -282,8 +233,8 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
       try {
         const parsed = JSON.parse(event.target?.result as string);
         onRestoreData(parsed);
-        setSuccessMessage('Data successfully restored from backup JSON file!');
-      } catch (err) {
+        setSuccessMessage('Data successfully restored from backup JSON file and saved to Firebase!');
+      } catch {
         setErrorMessage('Invalid JSON backup file.');
       }
     };
@@ -292,9 +243,13 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-xs animate-in fade-in">
-      <div className={`border rounded-3xl max-w-2xl w-full p-6 md:p-8 shadow-2xl max-h-[90vh] overflow-y-auto space-y-6 ${
-        isDark ? 'bg-slate-900 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'
-      }`}>
+      <div
+        className={`border rounded-3xl max-w-2xl w-full p-6 md:p-8 shadow-2xl max-h-[90vh] overflow-y-auto space-y-6 ${
+          isDark
+            ? 'bg-slate-900 border-slate-700 text-slate-100'
+            : 'bg-white border-slate-200 text-slate-900'
+        }`}
+      >
         {/* Header */}
         <div className="flex items-center justify-between pb-4 border-b border-slate-200 dark:border-slate-800">
           <div className="flex items-center gap-3">
@@ -303,10 +258,10 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
             </div>
             <div>
               <h3 className="text-lg font-bold text-slate-900 dark:text-white tracking-tight">
-                Google Cloud Sync &amp; Backup Central
+                Cloud Sync
               </h3>
               <p className="text-xs text-slate-600 dark:text-slate-400">
-                Synchronize Dr. Ravi Shankar's Life OS to Google Drive, Google Sheets &amp; Google Calendar.
+                Real-time Cloud Storage auto-sync across all devices, plus Google Drive &amp; Calendar.
               </p>
             </div>
           </div>
@@ -332,7 +287,7 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
           </div>
         )}
 
-        {/* Google Account & Permanent Email Login Status */}
+        {/* Gmail Connection Status Card */}
         <div
           className={`p-4 rounded-2xl border space-y-3 ${
             isDark ? 'bg-slate-800/80 border-slate-700/80' : 'bg-slate-50 border-slate-200'
@@ -340,81 +295,142 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
         >
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div className="flex items-center gap-3">
-              <div className="w-9 h-9 rounded-full bg-slate-200 dark:bg-slate-700 flex items-center justify-center text-sm font-bold text-emerald-600 dark:text-emerald-400">
-                {user ? (user.displayName || user.email || 'R')[0].toUpperCase() : 'G'}
+              <div
+                className={`w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold shrink-0 ${
+                  isConnected
+                    ? 'bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30'
+                    : 'bg-amber-500/20 text-amber-600 dark:text-amber-400 border border-amber-500/30'
+                }`}
+              >
+                {isConnected ? (user?.displayName || user?.email || 'R')[0].toUpperCase() : <Mail className="w-4 h-4" />}
               </div>
               <div>
                 <div className="flex items-center gap-2 flex-wrap">
                   <p className="text-xs font-bold text-slate-900 dark:text-white">
-                    {user ? user.displayName || user.email : 'Account Not Connected'}
+                    {isConnected
+                      ? user?.displayName || user?.email
+                      : 'Gmail Not Connected — Please Connect First'}
                   </p>
-                  {user?.email && (
+                  {isConnected && (
                     <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9.5px] font-bold bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30">
                       <ShieldCheck className="w-3 h-3" />
-                      <span>Saved Permanently ({user.email})</span>
+                      <span>{user?.email}</span>
                     </span>
                   )}
                 </div>
-                <p className="text-[11px] text-slate-600 dark:text-slate-400">
-                  {user
-                    ? 'Permanently logged in across Website, Vercel & Android APK launches'
-                    : 'Login once with your email or Google account to stay permanently signed in'}
+                <p className="text-[11px] text-slate-600 dark:text-slate-400 mt-0.5">
+                  {isConnected
+                    ? 'Logged in permanently across Website, Vercel & Android APK. You will not be asked every time.'
+                    : 'Connect your Gmail once below. It stays saved permanently so you won’t be asked every time.'}
                 </p>
               </div>
             </div>
 
-            <div className="flex items-center gap-2">
-              <button
-                onClick={handleSignIn}
-                className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-sm cursor-pointer"
-              >
-                <LogIn className="w-3.5 h-3.5" />
-                <span>{user ? 'Reconnect Google OAuth' : 'Sign in with Google'}</span>
-              </button>
-              {user && (
+            <div className="flex items-center gap-2 shrink-0">
+              {isConnected ? (
+                <>
+                  <span className="px-3.5 py-2 rounded-xl bg-emerald-600/20 text-emerald-600 dark:text-emerald-400 border border-emerald-500/40 font-bold text-xs flex items-center justify-center gap-1.5 select-none">
+                    <CheckCircle className="w-3.5 h-3.5" />
+                    <span>Connected</span>
+                  </span>
+                  <button
+                    onClick={handleSignOut}
+                    className="p-2 rounded-xl bg-slate-200 dark:bg-slate-700 hover:bg-rose-500/20 text-slate-600 dark:text-slate-300 hover:text-rose-600 dark:hover:text-rose-400 text-xs font-bold transition-colors cursor-pointer"
+                    title="Disconnect Gmail"
+                  >
+                    <LogOut className="w-3.5 h-3.5" />
+                  </button>
+                </>
+              ) : (
                 <button
-                  onClick={handleSignOut}
-                  className="px-3 py-2 rounded-xl bg-rose-500/15 hover:bg-rose-500/25 text-rose-600 dark:text-rose-400 border border-rose-500/30 font-bold text-xs cursor-pointer"
+                  onClick={handleConnectGoogle}
+                  className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-sm cursor-pointer transition-all"
                 >
-                  Sign Out
+                  <LogIn className="w-3.5 h-3.5" />
+                  <span>Connect</span>
                 </button>
               )}
             </div>
           </div>
 
-          {/* Direct Permanent Email Login Bar (Ideal for Vercel & Converted APK) */}
-          <form
-            onSubmit={handleSavePermanentEmail}
-            className="pt-2.5 border-t border-slate-200 dark:border-slate-700/80 flex flex-col sm:flex-row items-stretch sm:items-center gap-2"
-          >
-            <input
-              type="email"
-              value={emailInput}
-              onChange={(e) => setEmailInput(e.target.value)}
-              placeholder="Enter email to save permanently (e.g. rk867000@gmail.com)"
-              className="flex-1 px-3 py-1.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
-            />
-            <button
-              type="submit"
-              className="px-3.5 py-1.5 rounded-xl bg-teal-600 hover:bg-teal-500 text-white font-bold text-xs cursor-pointer shrink-0"
+          {/* When not connected, allow 1-click Gmail input confirmation as well */}
+          {!isConnected && (
+            <form
+              onSubmit={handleQuickConnectEmail}
+              className="pt-2 border-t border-slate-200 dark:border-slate-700/70 flex flex-col sm:flex-row gap-2"
             >
-              Save Email Permanently
-            </button>
-          </form>
+              <input
+                type="email"
+                required
+                value={emailInput}
+                onChange={(e) => setEmailInput(e.target.value)}
+                placeholder="Enter your Gmail (e.g. rk867000@gmail.com)"
+                className="flex-1 px-3 py-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-xs font-mono text-slate-900 dark:text-white"
+              />
+              <button
+                type="submit"
+                className="px-4 py-2 rounded-xl bg-sky-600 hover:bg-sky-500 text-white font-bold text-xs flex items-center justify-center gap-1.5 cursor-pointer shrink-0"
+              >
+                <CheckCircle className="w-3.5 h-3.5" />
+                <span>Connect Gmail Permanently</span>
+              </button>
+            </form>
+          )}
         </div>
 
         {/* Sync Actions Grid */}
         <div className="space-y-3.5">
-          {/* Item 1: Google Drive */}
-          <div className={`p-4 rounded-2xl border flex flex-col sm:flex-row sm:items-center justify-between gap-4 ${
-            isDark ? 'bg-slate-800/60 border-slate-700/60' : 'bg-white border-slate-200 shadow-2xs'
-          }`}>
+          {/* Item 1: Firebase Cloud Storage (Real-Time Auto-Sync) */}
+          <div
+            className={`p-4 rounded-2xl border flex flex-col sm:flex-row sm:items-center justify-between gap-4 ${
+              isDark
+                ? 'bg-slate-800/60 border-emerald-500/30'
+                : 'bg-emerald-50/40 border-emerald-200 shadow-2xs'
+            }`}
+          >
+            <div className="flex items-start gap-3">
+              <div className="p-2 rounded-xl bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 mt-0.5">
+                <Database className="w-5 h-5" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h4 className="text-xs font-bold text-slate-900 dark:text-white">
+                    Firebase Cloud Storage (All Data Auto-Saved)
+                  </h4>
+                  <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30">
+                    Live Real-Time Sync Active
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-600 dark:text-slate-400 mt-0.5 leading-relaxed">
+                  Automatically saves every change in Expenses, Loans, Investments, Keep To-Do, Notes, Roadmap, Calendar, Habits, Dinacharya &amp; Journal directly to Firebase Cloud Firestore across all your devices.
+                </p>
+              </div>
+            </div>
+
+            <button
+              onClick={handleFirebaseManualSync}
+              disabled={isFirebaseSyncing}
+              className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-bold text-xs flex items-center justify-center gap-1.5 shrink-0 shadow-md shadow-emerald-950/20 cursor-pointer"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${isFirebaseSyncing ? 'animate-spin' : ''}`} />
+              <span>{isFirebaseSyncing ? 'Syncing...' : 'Sync Now'}</span>
+            </button>
+          </div>
+
+          {/* Item 2: Google Drive */}
+          <div
+            className={`p-4 rounded-2xl border flex flex-col sm:flex-row sm:items-center justify-between gap-4 ${
+              isDark ? 'bg-slate-800/60 border-slate-700/60' : 'bg-white border-slate-200 shadow-2xs'
+            }`}
+          >
             <div className="flex items-start gap-3">
               <div className="p-2 rounded-xl bg-blue-500/20 text-blue-600 dark:text-blue-400 mt-0.5">
                 <HardDrive className="w-5 h-5" />
               </div>
               <div>
-                <h4 className="text-xs font-bold text-slate-900 dark:text-white">Save Full Backup to Google Drive</h4>
+                <h4 className="text-xs font-bold text-slate-900 dark:text-white">
+                  Save Full Backup to Google Drive
+                </h4>
                 <p className="text-[11px] text-slate-600 dark:text-slate-400 mt-0.5 leading-relaxed">
                   Archives all notes, roadmaps, patient appointments, and financial records into a secure JSON file in your Google Drive.
                 </p>
@@ -436,74 +452,20 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
             </button>
           </div>
 
-          {/* Item 2: Google Sheets (2-Way Auto-Sync) */}
-          <div className={`p-4 rounded-2xl border flex flex-col sm:flex-row sm:items-center justify-between gap-4 ${
-            isDark ? 'bg-slate-800/60 border-slate-700/60' : 'bg-white border-slate-200 shadow-2xs'
-          }`}>
-            <div className="flex items-start gap-3">
-              <div className="p-2 rounded-xl bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 mt-0.5">
-                <FileSpreadsheet className="w-5 h-5" />
-              </div>
-              <div>
-                <div className="flex items-center gap-2 flex-wrap">
-                  <h4 className="text-xs font-bold text-slate-900 dark:text-white">
-                    2-Way Master Google Sheet Sync
-                  </h4>
-                  <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30">
-                    Live Auto-Save Active
-                  </span>
-                </div>
-                <p className="text-[11px] text-slate-600 dark:text-slate-400 mt-0.5 leading-relaxed">
-                  Automatically saves every change made in the app to your same Master Google Sheet, and fetches updated sheet data into the app when you log in or click Fetch.
-                </p>
-                {sheetsResult && (
-                  <a
-                    href={sheetsResult.url}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="inline-flex items-center gap-1 text-[10px] text-emerald-600 dark:text-emerald-400 font-bold hover:underline mt-1"
-                  >
-                    <span>Open Master Sheet in Google Sheets</span>
-                    <ExternalLink className="w-3 h-3" />
-                  </a>
-                )}
-              </div>
-            </div>
-
-            <div className="flex items-center gap-2 shrink-0">
-              {onFetchFromSheet && (
-                <button
-                  onClick={handleSheetsFetch}
-                  disabled={isSheetsFetching}
-                  className="px-3 py-2 rounded-xl bg-sky-600 hover:bg-sky-500 disabled:opacity-50 text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-md shadow-sky-950/20 cursor-pointer"
-                  title="Fetch latest data from your Google Sheet into the app"
-                >
-                  <RefreshCw className={`w-3.5 h-3.5 ${isSheetsFetching ? 'animate-spin' : ''}`} />
-                  <span>{isSheetsFetching ? 'Fetching...' : 'Fetch Sheet'}</span>
-                </button>
-              )}
-              <button
-                onClick={handleSheetsExport}
-                disabled={isSheetsExporting}
-                className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-md shadow-emerald-950/20 cursor-pointer"
-                title="Save all current app data into the same Master Google Sheet"
-              >
-                <FileSpreadsheet className={`w-3.5 h-3.5 ${isSheetsExporting ? 'animate-spin' : ''}`} />
-                <span>{isSheetsExporting ? 'Saving...' : 'Save to Sheet'}</span>
-              </button>
-            </div>
-          </div>
-
           {/* Item 3: Google Calendar */}
-          <div className={`p-4 rounded-2xl border flex flex-col sm:flex-row sm:items-center justify-between gap-4 ${
-            isDark ? 'bg-slate-800/60 border-slate-700/60' : 'bg-white border-slate-200 shadow-2xs'
-          }`}>
+          <div
+            className={`p-4 rounded-2xl border flex flex-col sm:flex-row sm:items-center justify-between gap-4 ${
+              isDark ? 'bg-slate-800/60 border-slate-700/60' : 'bg-white border-slate-200 shadow-2xs'
+            }`}
+          >
             <div className="flex items-start gap-3">
               <div className="p-2 rounded-xl bg-amber-500/20 text-amber-600 dark:text-amber-400 mt-0.5">
                 <Calendar className="w-5 h-5" />
               </div>
               <div>
-                <h4 className="text-xs font-bold text-slate-900 dark:text-white">Sync Upcoming Events to Google Calendar</h4>
+                <h4 className="text-xs font-bold text-slate-900 dark:text-white">
+                  Sync Upcoming Events to Google Calendar
+                </h4>
                 <p className="text-[11px] text-slate-600 dark:text-slate-400 mt-0.5 leading-relaxed">
                   Pushes all unsynced OPD consultations, study sessions and reminders to your primary Google Calendar.
                 </p>

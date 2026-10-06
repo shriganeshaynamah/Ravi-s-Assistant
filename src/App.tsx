@@ -1,6 +1,14 @@
 import React, { useState, useEffect, useRef } from 'react';
 import type { User } from 'firebase/auth';
-import { initAuth, googleSignIn, logout, getSavedUser, TOKEN_STORAGE_KEY } from './services/firebase';
+import {
+  initAuth,
+  googleSignIn,
+  logout,
+  getSavedUser,
+  fetchMasterWorkspaceFromFirestore,
+  saveMasterWorkspaceToFirestore,
+  subscribeToMasterWorkspaceFirestore,
+} from './services/firebase';
 import {
   getStoredData,
   setStoredData,
@@ -20,11 +28,6 @@ import {
   defaultEventsList,
   syncExpensesToMonthlyArchive,
 } from './services/storage';
-import {
-  checkAndRunMonthly5thSheetAutoSync,
-  exportMultiSectionToGoogleSheets,
-  fetchFromMasterGoogleSheet,
-} from './services/googleSheets';
 import type {
   CalendarEvent,
   NoteItem,
@@ -152,90 +155,107 @@ export default function App() {
     getStoredData(STORAGE_KEYS.JOURNAL, defaultJournalEntries)
   );
 
-  // Two-Way Google Sheet Sync guards
-  const isApplyingRemoteSheetRef = useRef(false);
-  const isInitialSheetFetchDoneRef = useRef(false);
-  const sheetAutoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Real-Time Cloud Firestore Sync guards
+  const isApplyingRemoteRef = useRef(false);
+  const isFirestoreHydratedRef = useRef(false);
+  const lastSyncedTimestampRef = useRef<number>(0);
+  const firestoreAutoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const applyFetchedSheetData = (data: any) => {
-    isApplyingRemoteSheetRef.current = true;
-    if (data.milestones && Array.isArray(data.milestones) && data.milestones.length > 0) {
+  const applyRemoteWorkspaceData = (data: any) => {
+    if (!data || typeof data !== 'object') return;
+    isApplyingRemoteRef.current = true;
+    if (typeof data.updatedAtMs === 'number') {
+      lastSyncedTimestampRef.current = data.updatedAtMs;
+    }
+    if (Array.isArray(data.milestones)) {
       setMilestones(data.milestones);
+      setStoredData(STORAGE_KEYS.MILESTONES, data.milestones);
     }
-    if (data.loans && Array.isArray(data.loans)) {
+    if (Array.isArray(data.loans)) {
       setLoans(data.loans);
+      setStoredData(STORAGE_KEYS.LOANS, data.loans);
     }
-    if (data.investments && Array.isArray(data.investments)) {
+    if (Array.isArray(data.investments)) {
       setInvestments(data.investments);
+      setStoredData(STORAGE_KEYS.INVESTMENTS, data.investments);
     }
-    if (data.expenses && Array.isArray(data.expenses)) {
+    if (Array.isArray(data.expenses)) {
       setExpenses(data.expenses);
+      setStoredData(STORAGE_KEYS.EXPENSES, data.expenses);
       syncExpensesToMonthlyArchive(data.expenses);
     }
-    if (data.notes && Array.isArray(data.notes)) {
+    if (Array.isArray(data.notes)) {
       setNotes(data.notes);
+      setStoredData(STORAGE_KEYS.NOTES, data.notes);
     }
-    if (data.tasks && Array.isArray(data.tasks)) {
+    if (Array.isArray(data.tasks)) {
       setTasks(data.tasks);
+      setStoredData(STORAGE_KEYS.CHECKLISTS, data.tasks);
     }
-    if (data.events && Array.isArray(data.events)) {
+    if (Array.isArray(data.events)) {
       setEvents(data.events);
+      setStoredData(STORAGE_KEYS.EVENTS, data.events);
     }
-    if (data.notifications && Array.isArray(data.notifications) && data.notifications.length > 0) {
+    if (Array.isArray(data.notifications)) {
       setNotifications(data.notifications);
+      setStoredData(STORAGE_KEYS.NOTIFICATIONS, data.notifications);
     }
-    if (data.dinacharyaLogs && Array.isArray(data.dinacharyaLogs) && data.dinacharyaLogs.length > 0) {
+    if (Array.isArray(data.dinacharyaLogs)) {
       setDinacharyaLogs(data.dinacharyaLogs);
+      setStoredData(STORAGE_KEYS.DINACHARYA, data.dinacharyaLogs);
     }
-    if (data.habits && Array.isArray(data.habits) && data.habits.length > 0) {
+    if (Array.isArray(data.habits)) {
       setHabits(data.habits);
+      setStoredData(STORAGE_KEYS.HABITS, data.habits);
     }
-    if (data.journalEntries && Array.isArray(data.journalEntries)) {
+    if (Array.isArray(data.journalEntries)) {
       setJournalEntries(data.journalEntries);
+      setStoredData(STORAGE_KEYS.JOURNAL, data.journalEntries);
     }
+    autoSaveToCloud({
+      milestones: Array.isArray(data.milestones) ? data.milestones : milestones,
+      loans: Array.isArray(data.loans) ? data.loans : loans,
+      investments: Array.isArray(data.investments) ? data.investments : investments,
+      expenses: Array.isArray(data.expenses) ? data.expenses : expenses,
+      notes: Array.isArray(data.notes) ? data.notes : notes,
+      tasks: Array.isArray(data.tasks) ? data.tasks : tasks,
+      events: Array.isArray(data.events) ? data.events : events,
+      notifications: Array.isArray(data.notifications) ? data.notifications : notifications,
+      dinacharyaLogs: Array.isArray(data.dinacharyaLogs) ? data.dinacharyaLogs : dinacharyaLogs,
+      habits: Array.isArray(data.habits) ? data.habits : habits,
+      journalEntries: Array.isArray(data.journalEntries) ? data.journalEntries : journalEntries,
+    });
     setTimeout(() => {
-      isApplyingRemoteSheetRef.current = false;
-      isInitialSheetFetchDoneRef.current = true;
-    }, 800);
+      isApplyingRemoteRef.current = false;
+      isFirestoreHydratedRef.current = true;
+    }, 300);
   };
 
-  const syncFromMasterSheetToApp = async (): Promise<boolean> => {
-    try {
-      const res = await fetchFromMasterGoogleSheet();
-      if (res.found && res.data && Object.keys(res.data).length > 0) {
-        applyFetchedSheetData(res.data);
-        return true;
-      }
-      isInitialSheetFetchDoneRef.current = true;
-      return false;
-    } catch {
-      isInitialSheetFetchDoneRef.current = true;
-      return false;
-    }
-  };
-
-  // Sync Auth, Hydrate Persistent IndexedDB & Pull Latest Google Sheet Data on Launch
+  // Sync Auth, Hydrate Persistent IndexedDB & Pull Latest Firebase Cloud Storage Data on Launch
   useEffect(() => {
-    let hasAttemptedInitialSheetPull = false;
-
     const unsub = initAuth(
-      (u, token) => {
+      (u) => {
         setUser(u);
-        if (token && !hasAttemptedInitialSheetPull) {
-          hasAttemptedInitialSheetPull = true;
-          syncFromMasterSheetToApp();
-        } else if (!token) {
-          isInitialSheetFetchDoneRef.current = true;
-        }
       },
       () => {
         const saved = getSavedUser();
         setUser(saved);
-        isInitialSheetFetchDoneRef.current = true;
+        // Whenever email is not connected yet, ask first to connect email (once per session, not every time once connected)
+        if (!saved) {
+          try {
+            if (!sessionStorage.getItem('ayurlife_asked_connect_once')) {
+              sessionStorage.setItem('ayurlife_asked_connect_once', '1');
+              setIsCloudSyncOpen(true);
+            }
+          } catch {
+            setIsCloudSyncOpen(true);
+          }
+        }
       }
     );
 
     hydrateFromPersistentDB((snap) => {
+      if (isFirestoreHydratedRef.current) return;
       if (snap.milestones) setMilestones(snap.milestones);
       if (snap.loans) setLoans(snap.loans);
       if (snap.investments) setInvestments(snap.investments);
@@ -248,6 +268,52 @@ export default function App() {
       if (snap.habits) setHabits(snap.habits);
       if (snap.journalEntries) setJournalEntries(snap.journalEntries);
     });
+
+    // 1. Pull latest saved data from Firebase Cloud Firestore immediately on launch
+    fetchMasterWorkspaceFromFirestore()
+      .then((res) => {
+        if (res.status === 'found' && res.data) {
+          applyRemoteWorkspaceData(res.data);
+        } else if (res.status === 'not_found') {
+          // First time initializing Firebase Cloud Firestore with current data
+          isFirestoreHydratedRef.current = true;
+          saveMasterWorkspaceToFirestore({
+            milestones,
+            loans,
+            investments,
+            expenses,
+            notes,
+            tasks,
+            events,
+            notifications,
+            dinacharyaLogs,
+            habits,
+            journalEntries,
+          })
+            .then((ts) => {
+              lastSyncedTimestampRef.current = ts;
+            })
+            .catch(() => {});
+        } else {
+          isFirestoreHydratedRef.current = true;
+        }
+      })
+      .catch(() => {
+        isFirestoreHydratedRef.current = true;
+      });
+
+    // 2. Real-time subscription across all devices (Website, Vercel, Phone, Tablet, APK)
+    let unsubFirestore = () => {};
+    try {
+      unsubFirestore = subscribeToMasterWorkspaceFirestore((remoteDoc) => {
+        const remoteTs = Number(remoteDoc?.updatedAtMs || 0);
+        if (remoteTs > lastSyncedTimestampRef.current) {
+          applyRemoteWorkspaceData(remoteDoc);
+        }
+      });
+    } catch {
+      // ignore if offline
+    }
 
     ensurePushServiceWorker();
 
@@ -271,6 +337,7 @@ export default function App() {
 
     return () => {
       unsub();
+      unsubFirestore();
       window.removeEventListener('ravi_navigate_tab', handleNavigateTab);
       if ('serviceWorker' in navigator) {
         navigator.serviceWorker.removeEventListener('message', handleServiceWorkerMessage);
@@ -295,7 +362,7 @@ export default function App() {
     return () => clearTimeout(timer);
   }, [loans, tasks, events]);
 
-  // Save changes to storage & auto-sync to cloud
+  // Save theme preference
   useEffect(() => {
     setStoredData(STORAGE_KEYS.THEME, isDark);
     if (isDark) {
@@ -305,20 +372,8 @@ export default function App() {
     }
   }, [isDark]);
 
+  // Automatically save every data change to localStorage, IndexedDB & Firebase Cloud Firestore
   useEffect(() => {
-    setStoredData(STORAGE_KEYS.MILESTONES, milestones);
-    setStoredData(STORAGE_KEYS.LOANS, loans);
-    setStoredData(STORAGE_KEYS.INVESTMENTS, investments);
-    setStoredData(STORAGE_KEYS.EXPENSES, expenses);
-    syncExpensesToMonthlyArchive(expenses);
-    setStoredData(STORAGE_KEYS.NOTES, notes);
-    setStoredData(STORAGE_KEYS.CHECKLISTS, tasks);
-    setStoredData(STORAGE_KEYS.EVENTS, events);
-    setStoredData(STORAGE_KEYS.NOTIFICATIONS, notifications);
-    setStoredData(STORAGE_KEYS.DINACHARYA, dinacharyaLogs);
-    setStoredData(STORAGE_KEYS.HABITS, habits);
-    setStoredData(STORAGE_KEYS.JOURNAL, journalEntries);
-
     const fullSnapshot = {
       milestones,
       loans,
@@ -333,35 +388,47 @@ export default function App() {
       journalEntries,
     };
 
-    // Auto-save full snapshot to localStorage + IndexedDB
-    autoSaveToCloud(fullSnapshot);
-
-    // ALWAYS AUTO-SAVE CHANGES MADE IN APP TO THE MASTER GOOGLE SHEET (Debounced 1.2s)
-    if (!isApplyingRemoteSheetRef.current && isInitialSheetFetchDoneRef.current) {
-      const hasToken = Boolean(localStorage.getItem(TOKEN_STORAGE_KEY));
-      if (hasToken) {
-        if (sheetAutoSaveTimerRef.current) {
-          clearTimeout(sheetAutoSaveTimerRef.current);
-        }
-        sheetAutoSaveTimerRef.current = setTimeout(() => {
-          exportMultiSectionToGoogleSheets(fullSnapshot).catch((err) => {
-            console.warn('Background Google Sheet auto-save note:', err);
-          });
-        }, 1200);
-      }
+    if (isFirestoreHydratedRef.current) {
+      setStoredData(STORAGE_KEYS.MILESTONES, milestones);
+      setStoredData(STORAGE_KEYS.LOANS, loans);
+      setStoredData(STORAGE_KEYS.INVESTMENTS, investments);
+      setStoredData(STORAGE_KEYS.EXPENSES, expenses);
+      syncExpensesToMonthlyArchive(expenses);
+      setStoredData(STORAGE_KEYS.NOTES, notes);
+      setStoredData(STORAGE_KEYS.CHECKLISTS, tasks);
+      setStoredData(STORAGE_KEYS.EVENTS, events);
+      setStoredData(STORAGE_KEYS.NOTIFICATIONS, notifications);
+      setStoredData(STORAGE_KEYS.DINACHARYA, dinacharyaLogs);
+      setStoredData(STORAGE_KEYS.HABITS, habits);
+      setStoredData(STORAGE_KEYS.JOURNAL, journalEntries);
+      autoSaveToCloud(fullSnapshot);
     }
 
-    // Every 5th of month, auto-update the Master Google Sheet if connected
-    checkAndRunMonthly5thSheetAutoSync(fullSnapshot).catch(() => {});
+    // ALWAYS AUTO-SAVE CHANGES MADE IN WEBSITE / APP TO FIREBASE CLOUD FIRESTORE (Real-time cross-device sync)
+    if (!isApplyingRemoteRef.current && isFirestoreHydratedRef.current) {
+      if (firestoreAutoSaveTimerRef.current) {
+        clearTimeout(firestoreAutoSaveTimerRef.current);
+      }
+      const mutationTs = Date.now();
+      lastSyncedTimestampRef.current = mutationTs;
+      firestoreAutoSaveTimerRef.current = setTimeout(() => {
+        saveMasterWorkspaceToFirestore(fullSnapshot, mutationTs).catch((err) => {
+          console.warn('Firestore background sync note:', err);
+        });
+      }, 250);
+    }
 
     const handlePersistOnHide = () => {
-      autoSaveToCloud(fullSnapshot);
+      if (isFirestoreHydratedRef.current && !isApplyingRemoteRef.current) {
+        autoSaveToCloud(fullSnapshot);
+        saveMasterWorkspaceToFirestore(fullSnapshot, Date.now()).catch(() => {});
+      }
     };
     window.addEventListener('pagehide', handlePersistOnHide);
     document.addEventListener('visibilitychange', handlePersistOnHide);
     return () => {
-      if (sheetAutoSaveTimerRef.current) {
-        clearTimeout(sheetAutoSaveTimerRef.current);
+      if (firestoreAutoSaveTimerRef.current) {
+        clearTimeout(firestoreAutoSaveTimerRef.current);
       }
       window.removeEventListener('pagehide', handlePersistOnHide);
       document.removeEventListener('visibilitychange', handlePersistOnHide);
@@ -420,17 +487,17 @@ export default function App() {
   });
 
   const handleRestoreData = (data: any) => {
-    if (data.milestones) setMilestones(data.milestones);
-    if (data.loans) setLoans(data.loans);
-    if (data.investments) setInvestments(data.investments);
-    if (data.expenses) setExpenses(data.expenses);
-    if (data.notes) setNotes(data.notes);
-    if (data.tasks) setTasks(data.tasks);
-    if (data.events) setEvents(data.events);
-    if (data.notifications) setNotifications(data.notifications);
-    if (data.dinacharyaLogs) setDinacharyaLogs(data.dinacharyaLogs);
-    if (data.habits) setHabits(data.habits);
-    if (data.journalEntries) setJournalEntries(data.journalEntries);
+    if (Array.isArray(data.milestones)) setMilestones(data.milestones);
+    if (Array.isArray(data.loans)) setLoans(data.loans);
+    if (Array.isArray(data.investments)) setInvestments(data.investments);
+    if (Array.isArray(data.expenses)) setExpenses(data.expenses);
+    if (Array.isArray(data.notes)) setNotes(data.notes);
+    if (Array.isArray(data.tasks)) setTasks(data.tasks);
+    if (Array.isArray(data.events)) setEvents(data.events);
+    if (Array.isArray(data.notifications)) setNotifications(data.notifications);
+    if (Array.isArray(data.dinacharyaLogs)) setDinacharyaLogs(data.dinacharyaLogs);
+    if (Array.isArray(data.habits)) setHabits(data.habits);
+    if (Array.isArray(data.journalEntries)) setJournalEntries(data.journalEntries);
   };
 
   return (
@@ -445,10 +512,11 @@ export default function App() {
       {/* Offline Status Banner */}
       <OfflineIndicator />
 
-      {/* App Header (Structured with Dr. Ravi Shankar brand & live cloud auto-save) */}
+      {/* App Header (Structured with Dr. Ravi Shankar brand & live Firebase auto-save) */}
       <AppHeader
         onOpenDrawer={() => setIsDrawerOpen(true)}
         onOpenNotifications={() => setIsNotificationsOpen(true)}
+        onOpenCloudSync={() => setIsCloudSyncOpen(true)}
         unreadNotificationsCount={unreadNotificationsCount}
         user={user}
         isDark={isDark}
@@ -503,7 +571,6 @@ export default function App() {
             onDeleteInvestment={(id) => setInvestments((prev) => prev.filter((i) => i.id !== id))}
             user={user}
             onRequireAuth={() => setIsCloudSyncOpen(true)}
-            onFetchFromSheet={syncFromMasterSheetToApp}
             isDark={isDark}
           />
         )}
@@ -665,13 +732,9 @@ export default function App() {
             const res = await googleSignIn();
             if (res?.user) {
               setUser(res.user);
-              const pulled = await syncFromMasterSheetToApp();
-              if (!pulled) {
-                exportMultiSectionToGoogleSheets(getAllCurrentData()).catch(() => {});
-              }
             }
-          } catch (e) {
-            console.error(e);
+          } catch {
+            setIsCloudSyncOpen(true);
           }
         }}
         onSignOut={async () => {
@@ -694,7 +757,7 @@ export default function App() {
         isDark={isDark}
       />
 
-      {/* Cloud Sync Modal with Google Drive & Google Sheets */}
+      {/* Cloud Sync Modal with Firebase Cloud Storage, Google Drive & Google Calendar */}
       <CloudSyncModal
         isOpen={isCloudSyncOpen}
         onClose={() => setIsCloudSyncOpen(false)}
@@ -702,7 +765,6 @@ export default function App() {
         onUserChange={setUser}
         getAllData={getAllCurrentData}
         onRestoreData={handleRestoreData}
-        onFetchFromSheet={syncFromMasterSheetToApp}
         events={events}
         expenses={expenses}
         onUpdateEvent={(event) =>

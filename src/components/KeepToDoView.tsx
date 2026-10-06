@@ -15,13 +15,11 @@ import {
   Tag,
   Clock,
   ChevronRight,
-  FileSpreadsheet,
   Edit2,
   X,
   FileText,
 } from 'lucide-react';
 import { ConfirmationModal } from './ConfirmationModal';
-import { exportMultiSectionToGoogleSheets } from '../services/googleSheets';
 
 interface KeepToDoViewProps {
   tasks: ChecklistTask[];
@@ -57,8 +55,6 @@ export const KeepToDoView: React.FC<KeepToDoViewProps> = ({
     new Date().toISOString().split('T')[0]
   );
   const [isPinned, setIsPinned] = useState(false);
-  const [isExporting, setIsExporting] = useState(false);
-  const [exportNotice, setExportNotice] = useState<string | null>(null);
 
   const todayStr = useMemo(() => new Date().toISOString().split('T')[0], []);
 
@@ -96,21 +92,6 @@ export const KeepToDoView: React.FC<KeepToDoViewProps> = ({
     if (!editingTask) return;
     onUpdateTask(editingTask);
     setEditingTask(null);
-  };
-
-  const handleExportToSheet = async () => {
-    setIsExporting(true);
-    setExportNotice(null);
-    try {
-      const res = await exportMultiSectionToGoogleSheets({
-        tasks,
-      });
-      setExportNotice(res.spreadsheetUrl);
-    } catch (e: any) {
-      alert(`Export error: ${e.message || 'Check login'}`);
-    } finally {
-      setIsExporting(false);
-    }
   };
 
   // Filter tasks
@@ -166,31 +147,8 @@ export const KeepToDoView: React.FC<KeepToDoViewProps> = ({
               <span>Sticky Notes</span>
             </button>
           )}
-
-          <button
-            onClick={handleExportToSheet}
-            disabled={isExporting}
-            className="py-1 px-2.5 rounded-lg border text-[11px] font-semibold flex items-center gap-1 bg-purple-50 dark:bg-purple-950/60 border-purple-300 dark:border-purple-700 text-purple-800 dark:text-purple-300 hover:bg-purple-100 cursor-pointer shadow-2xs disabled:opacity-50"
-          >
-            <FileSpreadsheet className="w-3.5 h-3.5" />
-            <span>{isExporting ? 'Syncing...' : 'Save to Sheet'}</span>
-          </button>
         </div>
       </div>
-
-      {exportNotice && (
-        <div className="p-2.5 rounded-xl bg-purple-50 dark:bg-purple-950/50 border border-purple-300 dark:border-purple-700 text-xs text-purple-800 dark:text-purple-200 flex items-center justify-between">
-          <span>✓ Keep To-Do items synced with Master Google Sheet!</span>
-          <a
-            href={exportNotice}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="font-bold underline"
-          >
-            Open Sheet ↗
-          </a>
-        </div>
-      )}
 
       {/* Quick Stats Summary Strip */}
       <div className="grid grid-cols-3 gap-2 text-xs">

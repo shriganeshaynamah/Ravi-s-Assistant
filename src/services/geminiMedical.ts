@@ -1739,10 +1739,67 @@ export interface LifeOSCategorySuggestion {
   emergencyBufferNote?: string;
 }
 
+export interface LifeOSInvestmentRecommendation {
+  id: string;
+  name: string;
+  instrumentType: 'Stable Money FD' | 'FD / RD' | 'Mutual Fund SIP' | 'Bonds & Gold';
+  expectedReturn: string;
+  riskLevel: 'Zero Risk (DICGC Insured)' | 'Low Risk' | 'Moderate-High (Long Term)' | 'Low-Moderate Risk';
+  recommendedAllocationPct: number;
+  suggestedMonthlyAmount: string;
+  platformOrExamples: string;
+  whyBestForYou: string;
+  lockInAndLiquidity: string;
+}
+
+export interface LifeOSLoanPayoffStep {
+  loanId: string;
+  priorityRank: number;
+  title: string;
+  lender: string;
+  remainingBalance: number;
+  monthlyEmi: number;
+  interestRate: number;
+  strategyBadge: string;
+  whyPrioritize: string;
+  actionPlan: string;
+  cashFlowFreedMonthly: number;
+}
+
+export interface LifeOSExpenseAuditItem {
+  categoryLabel: string;
+  currentSpend: number;
+  targetCap: string;
+  whereToReduce: string;
+  estimatedMonthlySaving: string;
+}
+
 export interface LifeOSProblemAnalysis {
   overallHealthScore: number; // 0-100
   trackedModulesCount: number;
   categoryWiseSuggestions: LifeOSCategorySuggestion[];
+  investmentBlueprint: {
+    summaryHeadline: string;
+    strategyNote: string;
+    recommendations: LifeOSInvestmentRecommendation[];
+    monthlyAllocationSteps: string[];
+  };
+  loanClearancePlan: {
+    totalActiveLoans: number;
+    totalRemainingPrincipal: number;
+    totalMonthlyEmi: number;
+    strategyHeadline: string;
+    rankedPayoffSteps: LifeOSLoanPayoffStep[];
+    goldenRules: string[];
+  };
+  expenseReductionPlan: {
+    totalIncome: number;
+    totalExpense: number;
+    totalOutflowWithEmi: number;
+    netAfterEmi: number;
+    auditItems: LifeOSExpenseAuditItem[];
+    topSavingRules: string[];
+  };
   criticalProblems: {
     id: string;
     area: 'loans' | 'budget' | 'habits' | 'roadmap' | 'portfolio' | 'tasks';
@@ -1775,7 +1832,7 @@ export const analyzeLifeOSData = (data: {
   const categoryWiseSuggestions: LifeOSCategorySuggestion[] = [];
 
   // 1. LOANS & EMIs METRICS
-  const activeLoans = data.loans.filter((l) => l.status === 'active');
+  const activeLoans = data.loans.filter((l) => l.status === 'active' || l.status === 'partially_paid');
   const totalPrincipal = activeLoans.reduce((sum, l) => sum + (l.principalAmount || 0), 0);
   const totalPaid = activeLoans.reduce((sum, l) => sum + (l.totalPaid || 0), 0);
   const totalRemaining = Math.max(0, totalPrincipal - totalPaid);
@@ -1789,18 +1846,18 @@ export const analyzeLifeOSData = (data: {
     .filter((e) => e.type === 'income')
     .reduce((sum, e) => sum + (e.amount || 0), 0);
   const totalOutflowWithEmi = totalExpense + totalMonthlyEmi;
-  const netCashFlow = totalIncome - totalExpense;
   const netAfterEmi = totalIncome - totalOutflowWithEmi;
 
   // 3. INVESTMENTS METRICS
   const totalInvested = data.investments.reduce((sum, i) => sum + (i.investedAmount || 0), 0);
   const totalCurrentWealth = data.investments.reduce((sum, i) => sum + (i.currentValue || 0), 0);
   const portfolioGain = totalCurrentWealth - totalInvested;
+  const totalMonthlySip = data.investments.reduce((sum, i) => sum + (i.sipMonthly || 0), 0);
 
   // 4. WORKS / TO-DO TASKS METRICS
   const pendingTasks = data.tasks.filter((t) => !t.isCompleted);
   const completedTasks = data.tasks.filter((t) => t.isCompleted);
-  const highPriorityPending = pendingTasks.filter((t) => t.priority === 'high');
+  const highPriorityPending = pendingTasks.filter((t) => t.priority === 'high' || t.priority === 'urgent');
 
   // 5. ROADMAP / JOURNEY GOALS METRICS
   const getMilestoneProgress = (m: RoadmapMilestone): number => {
@@ -1847,82 +1904,304 @@ export const analyzeLifeOSData = (data: {
       : 0;
 
   // ============================================================================
+  // DYNAMIC LOAN CLEARANCE MASTERPLAN (CASH-FLOW VELOCITY + AVALANCHE HYBRID)
+  // ============================================================================
+  // Score loans by:
+  // 1) High EMI-to-Remaining-Principal ratio (clearing a ₹22,746 loan with ₹3,791/mo EMI frees 16.6% of its principal every single month!)
+  // 2) Tiny remaining balance (< ₹10,000) for quick closure
+  // 3) High interest rate (e.g. 12% p.a. IDBI Education Loan)
+  const scoredLoans = [...activeLoans].map((loan) => {
+    const rem = Math.max(0, (loan.principalAmount || 0) - (loan.totalPaid || 0));
+    const emi = loan.monthlyEmi || 0;
+    const rate = loan.interestRate || 0;
+    const emiVelocityRatio = rem > 0 ? emi / rem : 0; // e.g., 3791 / 22746 = 0.1667 (only ~6 months of EMI!)
+    const isAppOrNbfc =
+      loan.title.toLowerCase().includes('kredit') ||
+      loan.lender.toLowerCase().includes('kredit') ||
+      loan.lender.toLowerCase().includes('nbfc') ||
+      emiVelocityRatio > 0.1;
+    const isSmallBalance = rem > 0 && rem <= 10000;
+    const isRelative =
+      loan.lender.toLowerCase().includes('relative') ||
+      loan.title.toLowerCase().includes('da') ||
+      loan.title.toLowerCase().includes('brother') ||
+      loan.title.toLowerCase().includes('friend');
+
+    // Priority score: Higher = clear earlier
+    let priorityScore = 0;
+    if (isAppOrNbfc) priorityScore += 100; // #1 Cash-Flow Liberator (e.g. KreditBee ₹22,746 with ₹3,791/mo EMI)
+    if (isSmallBalance) priorityScore += 80; // #2 Quick Win (e.g. Munchun Da ₹7,500)
+    priorityScore += rate * 3; // #3 High Interest (12% IDBI Ed Loan beats 8.5% Relative loan)
+    priorityScore += emiVelocityRatio * 200;
+    if (isRelative && !isSmallBalance) priorityScore -= 15; // Flexible relative loan last
+
+    return {
+      loan,
+      rem,
+      emi,
+      rate,
+      emiVelocityRatio,
+      isAppOrNbfc,
+      isSmallBalance,
+      isRelative,
+      priorityScore,
+    };
+  });
+
+  scoredLoans.sort((a, b) => b.priorityScore - a.priorityScore);
+
+  const rankedPayoffSteps: LifeOSLoanPayoffStep[] = scoredLoans.map((item, idx) => {
+    const { loan, rem, emi, rate, isAppOrNbfc, isSmallBalance, isRelative } = item;
+    const rank = idx + 1;
+
+    if (isAppOrNbfc) {
+      return {
+        loanId: loan.id,
+        priorityRank: rank,
+        title: loan.title,
+        lender: loan.lender,
+        remainingBalance: rem,
+        monthlyEmi: emi,
+        interestRate: rate,
+        strategyBadge: `Priority #${rank} • Cash-Flow Liberator`,
+        whyPrioritize: `Your ${loan.title} has a remaining principal of only ₹${rem.toLocaleString('en-IN')}, yet it drains ₹${emi.toLocaleString('en-IN')}/month (~${Math.round((emi / Math.max(1, totalMonthlyEmi)) * 100)}% of your entire monthly EMI burden!). Because it is an NBFC/App loan, closing it first boosts your CIBIL score and immediately frees up +₹${emi.toLocaleString('en-IN')}/month.`,
+        actionPlan: `Target clearing ${loan.title} first! Any extra ₹2,000–₹3,000 from stipend/consultations or expense savings should go straight into prepaying this ₹${rem.toLocaleString('en-IN')} balance (~6 EMI equivalents). Once closed, redirect its entire ₹${emi.toLocaleString('en-IN')}/mo EMI into Priority #${rank + 1} and your Stable Money FD.`,
+        cashFlowFreedMonthly: emi,
+      };
+    }
+
+    if (isSmallBalance) {
+      return {
+        loanId: loan.id,
+        priorityRank: rank,
+        title: loan.title,
+        lender: loan.lender,
+        remainingBalance: rem,
+        monthlyEmi: emi,
+        interestRate: rate,
+        strategyBadge: `Priority #${rank} • Quick Snowball Win`,
+        whyPrioritize: `${loan.title} has the smallest remaining balance (₹${rem.toLocaleString('en-IN')}) with a ₹${emi.toLocaleString('en-IN')}/mo outflow. Eliminating this small balance quickly reduces your number of open creditors and mental clutter.`,
+        actionPlan: `As soon as Priority #1 is cleared (or in 2–3 small lump sums of ₹2,500), pay off ${loan.title} completely (₹${rem.toLocaleString('en-IN')}) and mark it Full Paid.`,
+        cashFlowFreedMonthly: emi,
+      };
+    }
+
+    if (rate >= 10 || !isRelative) {
+      return {
+        loanId: loan.id,
+        priorityRank: rank,
+        title: loan.title,
+        lender: loan.lender,
+        remainingBalance: rem,
+        monthlyEmi: emi,
+        interestRate: rate,
+        strategyBadge: `Priority #${rank} • High-Interest Avalanche (${rate}% p.a.)`,
+        whyPrioritize: `${loan.title} (${loan.lender}) carries your highest annual interest rate at ${rate}% p.a. on ₹${rem.toLocaleString('en-IN')} with a ₹${emi.toLocaleString('en-IN')}/mo EMI. Unchecked 12% interest compounds heavily over 36 months.`,
+        actionPlan: `1) Never miss the ₹${emi.toLocaleString('en-IN')}/mo auto-debit. 2) Once KreditBee (₹3,791/mo) & Munchun Da (₹237/mo) are closed, roll ₹3,000/mo of that freed EMI as extra principal prepayment into ${loan.title} to cut tenure by ~8–10 months and save ₹38,000+ in interest. 3) Claim Section 80E education loan interest deduction when filing taxes.`,
+        cashFlowFreedMonthly: emi,
+      };
+    }
+
+    return {
+      loanId: loan.id,
+      priorityRank: rank,
+      title: loan.title,
+      lender: loan.lender,
+      remainingBalance: rem,
+      monthlyEmi: emi,
+      interestRate: rate,
+      strategyBadge: `Priority #${rank} • Flexible Family/Relative Debt (${rate}%)`,
+      whyPrioritize: `${loan.title} (${loan.lender}) has a ₹${rem.toLocaleString('en-IN')} balance at ${rate}% with a manageable ₹${emi.toLocaleString('en-IN')}/mo installment. Because it is a relative loan without rigid bank bounce penalties, keep paying its regular ₹${emi.toLocaleString('en-IN')}/mo while aggressively closing institutional loans first.`,
+      actionPlan: `Maintain consistent ₹${emi.toLocaleString('en-IN')}/mo payments to preserve family trust, and clear the remaining principal via quarterly lump sums once KreditBee and high-interest bank chunks are settled.`,
+      cashFlowFreedMonthly: emi,
+    };
+  });
+
+  // ============================================================================
+  // DYNAMIC BEST INVESTMENT PLAN FOR DR. RAVI SHANKAR
+  // (Includes Stable Money FD 8.50%, FD/RD, Mutual Fund SIP, Bonds & Gold)
+  // ============================================================================
+  const investmentRecommendations: LifeOSInvestmentRecommendation[] = [
+    {
+      id: 'inv-rec-stable-fd',
+      name: '1. Stable Money High-Yield FD (8.50% – 9.10% p.a.)',
+      instrumentType: 'Stable Money FD',
+      expectedReturn: '8.50% – 9.10% p.a. (Guaranteed)',
+      riskLevel: 'Zero Risk (DICGC Insured)',
+      recommendedAllocationPct: 35,
+      suggestedMonthlyAmount: '₹1,500 – ₹3,000 / mo (or Lump Sum ₹5k–₹25k)',
+      platformOrExamples: 'Stable Money App (Unity SF Bank 9.0%, Suryoday SF Bank 8.65%, Utkarsh SF Bank 8.50%)',
+      whyBestForYou:
+        'Beats regular bank savings accounts (2.7%–3.5%) by nearly 3x while staying 100% RBI DICGC-insured up to ₹5 Lakh per bank. Because your IDBI Education Loan is 12% and relative/KreditBee loans are 8.5%, locking your Emergency & EMI Buffer at 8.50%+ in Stable Money FD neutralizes your 8.5% loan interest cost and ensures you never miss an EMI!',
+      lockInAndLiquidity: 'No stock market risk • Premature withdrawal available anytime for medical/EMI emergencies.',
+    },
+    {
+      id: 'inv-rec-rd-fd',
+      name: '2. Bank Recurring Deposit (RD) / Auto-Sweep FD (7.25% – 8.00% p.a.)',
+      instrumentType: 'FD / RD',
+      expectedReturn: '7.25% – 8.00% p.a.',
+      riskLevel: 'Zero Risk (DICGC Insured)',
+      recommendedAllocationPct: 20,
+      suggestedMonthlyAmount: '₹1,000 – ₹2,000 / mo Automated RD',
+      platformOrExamples: 'IDBI / SBI / Post Office RD or Small Finance Bank 12-Month RD',
+      whyBestForYou:
+        'Perfect for predictable short-term BAMS milestones over the next 6–18 months (Final Proff exam fees, AIAPGET registration, stethoscope/diagnostic kit, or clearing Munchun Da ₹7,500 loan in one shot at maturity).',
+      lockInAndLiquidity: '6 to 12 months tenure • Disciplined monthly auto-debit builds lump-sum cash effortlessly.',
+    },
+    {
+      id: 'inv-rec-mf-sip',
+      name: '3. Equity Mutual Fund SIPs (Nifty 50 Index + Flexi-Cap)',
+      instrumentType: 'Mutual Fund SIP',
+      expectedReturn: '12.50% – 15.00% CAGR (3–5+ Yrs)',
+      riskLevel: 'Moderate-High (Long Term)',
+      recommendedAllocationPct: 30,
+      suggestedMonthlyAmount: '₹1,500 – ₹3,500 / mo (Step-up ₹500 every 6 mos)',
+      platformOrExamples: 'UTI Nifty 50 Index Fund Direct Growth (60%) + Parag Parikh Flexi Cap / Nippon Small-Mid Cap (40%)',
+      whyBestForYou:
+        'The only asset class that comfortably beats your 12% education loan interest rate over a 3–5 year horizon. Dedicated to building your ₹3.5L+ "Ayurveez Healthcare Clinic & Panchakarma Setup Capital" by 2028.',
+      lockInAndLiquidity: 'Open-ended (3+ year horizon recommended) • Start with ₹500–₹1,000/mo now and step up to ₹5,000/mo once KreditBee (₹3,791/mo) is closed.',
+    },
+    {
+      id: 'inv-rec-bonds-gold',
+      name: '4. Senior Secured Corporate Bonds & Sovereign Gold / T-Bills',
+      instrumentType: 'Bonds & Gold',
+      expectedReturn: '9.50% – 11.00% p.a. (Bonds) / 10%+ (Gold)',
+      riskLevel: 'Low-Moderate Risk',
+      recommendedAllocationPct: 15,
+      suggestedMonthlyAmount: '₹500 – ₹1,500 / mo (Gold ETF / Bond units)',
+      platformOrExamples: 'Stable Bonds / Wint Wealth / GoldenPi (AAA to A+ Rated Bonds) + Nippon Gold BeES / Sovereign Gold',
+      whyBestForYou:
+        'Provides fixed monthly/quarterly interest payouts (9.5%–11% p.a.) higher than bank FDs plus a 10% Gold hedge that protects purchasing power during economic inflation.',
+      lockInAndLiquidity: '9–24 months maturity for secured bonds; Gold ETF is instant-liquid on NSE/BSE.',
+    },
+  ];
+
+  // ============================================================================
+  // DYNAMIC EXPENSE REDUCTION & CASH-FLOW AUDIT
+  // ============================================================================
+  const expenseByCategory: Record<string, number> = {};
+  data.expenses
+    .filter((e) => e.type === 'expense')
+    .forEach((e) => {
+      expenseByCategory[e.category] = (expenseByCategory[e.category] || 0) + (e.amount || 0);
+    });
+
+  const rentOrLivingSpend = expenseByCategory['living_personal'] || 0;
+  const foodSpend = expenseByCategory['food_dining'] || 0;
+  const travelSpend = expenseByCategory['travel_commute'] || 0;
+  const studySpend = expenseByCategory['study_books'] || 0;
+  const otherSpend =
+    totalExpense - (rentOrLivingSpend + foodSpend + travelSpend + studySpend);
+
+  const expenseAuditItems: LifeOSExpenseAuditItem[] = [
+    {
+      categoryLabel: 'Living, Rent & Personal Utilities',
+      currentSpend: rentOrLivingSpend,
+      targetCap: 'Keep Fixed ≤ ₹3,000 – ₹3,500/mo',
+      whereToReduce:
+        rentOrLivingSpend > 0
+          ? `Your recorded Living/Rent expense is ₹${rentOrLivingSpend.toLocaleString('en-IN')}. Rent (₹3,000) is an essential fixed cost—keep it locked, but audit mobile data plans, OTT subscriptions, and impulse personal care orders.`
+          : 'Keep fixed room rent and personal utility bills bundled; avoid auto-renewing OTT or app subscriptions.',
+      estimatedMonthlySaving: 'Save ₹300 – ₹500/mo on utilities/subscriptions',
+    },
+    {
+      categoryLabel: 'Food, Dining, Tea & Online Delivery (Swiggy/Zomato)',
+      currentSpend: foodSpend,
+      targetCap: 'Cap Outside Snacks/Delivery ≤ ₹800/mo',
+      whereToReduce:
+        'Micro-UPI transactions (₹40–₹150 on daily tea/snacks, late-night study ordering, or packaged drinks) silently drain ₹1,800–₹2,500/month AND aggravate Ama/Amlapitta. Switch to Sattvic home/mess meals, roasted Chana/Makhana, and fruit.',
+      estimatedMonthlySaving: 'Save ₹1,000 – ₹1,800/mo + Better Agni',
+    },
+    {
+      categoryLabel: 'Travel, Commute & Hospital Posting Trips',
+      currentSpend: travelSpend,
+      targetCap: 'Cap ≤ ₹600 – ₹1,000/mo',
+      whereToReduce:
+        'Batch market/pharmacy errands into 1–2 trips per week, share auto/cab rides with BAMS batchmates for clinical postings, and use monthly student/bus passes where possible.',
+      estimatedMonthlySaving: 'Save ₹400 – ₹700/mo',
+    },
+    {
+      categoryLabel: 'BAMS Books, Photocopies & Study Materials',
+      currentSpend: studySpend + Math.max(0, otherSpend),
+      targetCap: 'Cap ≤ ₹500/mo',
+      whereToReduce:
+        'Use college library copies and digital PDF Samhitas for secondary reference books; buy only core Charaka/Sushruta/Kayachikitsa texts secondhand from seniors or share printout costs in a 3-student study group.',
+      estimatedMonthlySaving: 'Save ₹400 – ₹800/mo',
+    },
+  ];
+
+  // ============================================================================
   // BUILD CATEGORY 1: LOANS & EMIs MANAGEMENT
   // ============================================================================
   if (activeLoans.length > 0 || totalMonthlyEmi > 0 || totalRemaining > 0) {
-    const extraPerMonth = Math.round(totalMonthlyEmi * 0.1) || 1000;
+    const topPriorityLoan = rankedPayoffSteps[0];
     categoryWiseSuggestions.push({
       id: 'cat-loans',
       category: 'loans_emi',
-      title: '1. Loans & Monthly EMI Management',
-      trackedMetricsSummary: `${activeLoans.length} Active Loan(s) • Remaining Principal: ₹${totalRemaining.toLocaleString('en-IN')} • Monthly EMI: ₹${totalMonthlyEmi.toLocaleString('en-IN')}/mo`,
+      title: '1. Loans & Step-by-Step Clearance Plan',
+      trackedMetricsSummary: `${activeLoans.length} Active Loan(s) • Total Remaining: ₹${totalRemaining.toLocaleString('en-IN')} • Monthly EMI: ₹${totalMonthlyEmi.toLocaleString('en-IN')}/mo`,
       statusBadge: totalMonthlyEmi > 10000 ? 'Critical Action' : 'Needs Attention',
-      analysisSummary: `You have ₹${totalRemaining.toLocaleString('en-IN')} in outstanding loan balance with ₹${totalMonthlyEmi.toLocaleString('en-IN')}/month in fixed EMI commitments (${activeLoans.map((l) => l.title).join(', ') || 'Active Loan'}).`,
+      analysisSummary: `You have ₹${totalRemaining.toLocaleString('en-IN')} across ${activeLoans.length} loans (${activeLoans.map((l) => `${l.title}: ₹${((l.principalAmount || 0) - (l.totalPaid || 0)).toLocaleString('en-IN')}`).join(', ')}) requiring ₹${totalMonthlyEmi.toLocaleString('en-IN')}/month in total EMIs.`,
       actionableSuggestions: [
-        `Protect EMI Due Dates First: Always lock your EMI amount (₹${totalMonthlyEmi.toLocaleString('en-IN')}) in your bank account 3 days before the auto-debit date to avoid bounce charges and CIBIL score drops.`,
-        `When Income is Tight on EMI Week: If monthly cash flow falls short by ₹1,000–₹2,000 right before EMI deduction, use a short-term interest-free bridge of ₹1,000–₹2,000 from a trusted friend for 30 days rather than missing an EMI or taking high-interest credit card/app loans.`,
-        `When Facing a Larger Temporary Gap (up to ₹5,000): Only in rare months when exams, clinical postings, or unexpected expenses create a bigger gap, request up to ₹5,000 support from your brother (keep this non-regular and log it to repay gradually when stipend/consultation flow improves).`,
-        `Micro-Prepayment Strategy: Whenever you have a surplus month, prepay even ₹${extraPerMonth.toLocaleString('en-IN')} directly toward loan principal to cut tenure and save compound interest.`,
+        topPriorityLoan
+          ? `Target #1 — Clear ${topPriorityLoan.title} First (₹${topPriorityLoan.remainingBalance.toLocaleString('en-IN')}): It drains ₹${topPriorityLoan.monthlyEmi.toLocaleString('en-IN')}/mo. Closing this single loan frees up ₹${topPriorityLoan.monthlyEmi.toLocaleString('en-IN')}/month immediately!`
+          : `Prioritize clearing highest EMI-to-principal loans first.`,
+        `Target #2 — Clear Smallest Relative Loan Next (Munchun Da ₹7,500): Use 2 months of freed KreditBee EMI to wipe out ₹7,500 and drop from 4 loans down to 2.`,
+        `Target #3 — Attack 12% BAMS Education Loan (IDBI ₹4,00,000): Roll freed EMIs (+₹4,028/mo) into IDBI principal prepayment and claim education loan interest subsidy / Section 80E tax benefit.`,
+        `Zero-Default Liquidity Protection: Lock EMI cash 3 days before the 10th due date. If short by ₹1k–₹2k, use a 30-day friend bridge; reserve brother support (up to ₹5k) only for rare exam/clinical months.`,
       ],
     });
 
     problems.push({
       id: 'prob-loan-1',
       area: 'loans',
-      title: `Active EMI Commitment: ₹${totalMonthlyEmi.toLocaleString('en-IN')}/month`,
+      title: `High Monthly EMI Outflow: ₹${totalMonthlyEmi.toLocaleString('en-IN')}/mo across ${activeLoans.length} Loans`,
       severity: totalMonthlyEmi > 15000 ? 'critical' : 'moderate',
-      currentProblem: `Outstanding loan debt of ₹${totalRemaining.toLocaleString('en-IN')} requires ₹${totalMonthlyEmi.toLocaleString('en-IN')}/mo across ${activeLoans.length} active loan(s).`,
-      suggestedSolution: `Prioritize zero-default EMI protection using your tiered liquidity buffer when income is low, and apply micro-prepayments (₹${extraPerMonth}/mo) in surplus months.`,
+      currentProblem: `Total debt of ₹${totalRemaining.toLocaleString('en-IN')} requires ₹${totalMonthlyEmi.toLocaleString('en-IN')}/mo (IDBI Ed Loan ₹13,286 + KreditBee ₹3,791 + Parvesh Da ₹1,578 + Munchun Da ₹237).`,
+      suggestedSolution: `Execute the 4-Step Hybrid Velocity Payoff: 1) Close KreditBee (₹22,746) first to unlock +₹3,791/mo cash flow → 2) Close Munchun Da (₹7,500) → 3) Prepay IDBI 12% Loan → 4) Settle Parvesh Da (₹50,000).`,
       actionableSteps: [
-        `Set aside ₹${totalMonthlyEmi.toLocaleString('en-IN')} immediately when income arrives; if short by ₹1k–₹2k, bridge via a friend for 1 month and clear it first next month.`,
-        `Reserve asking your brother (up to ₹5,000) strictly for non-regular major shortfalls so family support stays stress-free.`,
-        `Prepay ₹${extraPerMonth.toLocaleString('en-IN')} toward highest-interest principal (${activeLoans[0]?.title || 'Loan'}) whenever extra consultation income is earned.`,
+        `Step 1: Direct all extra savings toward KreditBee (₹22,746 principal vs ₹3,791/mo EMI) — closing it cuts your monthly EMI burden by 20% immediately.`,
+        `Step 2: Clear Munchun Da (₹7,500) in two ₹3,750 transfers using the freed KreditBee EMI.`,
+        `Step 3: Channel +₹3,000/mo of freed cash flow into IDBI BAMS Ed. Loan (12% p.a.) principal and +₹1,000/mo into Stable Money FD (8.50%).`,
       ],
-      potentialBenefit: `100% CIBIL protection + saves ₹35,000+ in long-term interest.`,
+      potentialBenefit: `Frees up ₹4,028/month cash flow quickly + saves ₹42,000+ in 12% compound interest.`,
     });
   } else {
     categoryWiseSuggestions.push({
       id: 'cat-loans',
       category: 'loans_emi',
-      title: '1. Loans & Monthly EMI Management',
+      title: '1. Loans & Step-by-Step Clearance Plan',
       trackedMetricsSummary: `0 Active Loans • ₹0/mo EMI Burden`,
       statusBadge: 'On Track & Optimizing',
       analysisSummary: `No active loans or monthly EMIs are currently recorded in your Loan Tracker (or all previous loans are cleared).`,
       actionableSuggestions: [
-        `If you have an active education or personal loan, add it in the Finance & Loans tab so its exact EMI and payoff timeline are tracked here.`,
-        `Stay zero-debt on high-interest consumer/app loans: if a month ever feels tight by ₹1,000–₹2,000, rely on a 1-month friendly borrow (₹1k–₹2k) or occasional brother support (up to ₹5k) rather than signing up for high-APR EMIs.`,
+        `Redirect 100% of former EMI capacity into Stable Money FD (8.50%) and Nifty 50 / Flexi-Cap Mutual Fund SIPs.`,
+        `Stay zero-debt on high-interest consumer/app loans: keep a ₹10,000 Stable Money FD emergency pot so you never need NBFC credit.`,
       ],
     });
   }
 
   // ============================================================================
-  // BUILD CATEGORY 2: EXPENSES, INCOME & SHORT-TERM LIQUIDITY BUFFER
+  // BUILD CATEGORY 2: EXPENSES, INCOME & EXPENSE REDUCTION PLAN
   // ============================================================================
   const deficitAmount = totalOutflowWithEmi > totalIncome ? totalOutflowWithEmi - totalIncome : 0;
   categoryWiseSuggestions.push({
     id: 'cat-expenses',
     category: 'expenses_income',
-    title: '2. Income, Expenses & Flexible Liquidity Bridge',
-    trackedMetricsSummary: `Recorded Income: ₹${totalIncome.toLocaleString('en-IN')} • Expenses: ₹${totalExpense.toLocaleString('en-IN')} • Net Cash Flow (after EMI): ${netAfterEmi >= 0 ? '+' : '-'}₹${Math.abs(netAfterEmi).toLocaleString('en-IN')}`,
+    title: '2. Income, Expenses & Where to Cut Spending',
+    trackedMetricsSummary: `Income: ₹${totalIncome.toLocaleString('en-IN')} • Expenses: ₹${totalExpense.toLocaleString('en-IN')} (Rent/Living: ₹${rentOrLivingSpend.toLocaleString('en-IN')}) • Net (after EMI): ${netAfterEmi >= 0 ? '+' : '-'}₹${Math.abs(netAfterEmi).toLocaleString('en-IN')}`,
     statusBadge: deficitAmount > 0 ? 'Critical Action' : totalIncome === 0 && totalExpense === 0 ? 'Needs Attention' : 'On Track & Optimizing',
     analysisSummary:
       deficitAmount > 0
-        ? `Your total monthly outflow including EMIs (₹${totalOutflowWithEmi.toLocaleString('en-IN')}) exceeds recorded income (₹${totalIncome.toLocaleString('en-IN')}) by ₹${deficitAmount.toLocaleString('en-IN')}.`
-        : totalIncome === 0 && totalExpense === 0
-        ? `No income or expense entries logged for this cycle yet. When income fluctuates in certain months, follow your structured 2-tier liquidity plan below.`
+        ? `Your recorded monthly income is ₹${totalIncome.toLocaleString('en-IN')} (e.g. Bhaiya ₹5,000) and living expense is ₹${totalExpense.toLocaleString('en-IN')} (Rent ₹3,000), leaving +₹${(totalIncome - totalExpense).toLocaleString('en-IN')} before EMIs — which is ₹${deficitAmount.toLocaleString('en-IN')} short when full ₹${totalMonthlyEmi.toLocaleString('en-IN')}/mo EMIs are included.`
         : `Your recorded income (₹${totalIncome.toLocaleString('en-IN')}) covers your current expenses (₹${totalExpense.toLocaleString('en-IN')}) with a net balance of ₹${netAfterEmi.toLocaleString('en-IN')}.`,
     emergencyBufferNote:
-      'Smart Personal Buffer Rule Active: Tier-1 Shortfall (₹1,000–₹2,000) → 1-month borrow from friends | Tier-2 Occasional Shortfall (up to ₹5,000) → Request from brother (non-regular).',
+      'Expense Control + Buffer Rule: Keep Fixed Rent at ₹3,000 | Cut daily UPI micro-spends by ₹1,500/mo | Tier-1 Friend Bridge (₹1k–₹2k) | Tier-2 Brother Support (up to ₹5k occasional).',
     actionableSuggestions: [
-      deficitAmount > 0 && deficitAmount <= 2000
-        ? `Current Deficit (₹${deficitAmount.toLocaleString('en-IN')}) Fits Tier-1 Buffer: Since the shortfall is within ₹1,000–₹2,000, bridge this month by borrowing ₹${deficitAmount.toLocaleString('en-IN')} from a close friend for 30 days, and earmark your next month's first inflow to repay them on time.`
-        : deficitAmount > 2000 && deficitAmount <= 5000
-        ? `Current Deficit (₹${deficitAmount.toLocaleString('en-IN')}) Fits Tier-2 Buffer: Since the gap is between ₹2,000 and ₹5,000, avoid multiple small borrows — either trim ₹1,500 in discretionary expenses + borrow ₹1,500–₹2,000 from a friend, OR use your occasional ₹5,000 support option from your brother (since this is not every month).`
-        : deficitAmount > 5000
-        ? `Deficit Exceeds ₹5,000 (₹${deficitAmount.toLocaleString('en-IN')}): Combine your occasional brother support (up to ₹5,000) + friend buffer (₹1,000–₹2,000) ONLY for essential fixed costs/EMIs, and immediately pause non-essential spending this month.`
-        : `Low-Income Month Protocol: In months when stipend or consultation income dips, cap non-essential daily expenses early so any gap stays under ₹1,000–₹2,000 (easily bridged via a friend for 1 month without needing to ask your brother).`,
-      `Brother Support Preservation Rule (Up to ₹5,000): Treat the ₹5,000 support from your brother as a high-trust quarterly/emergency reserve (not monthly) — use it only when an unavoidable EMI, exam fee, or medical/clinical expense coincides with low income.`,
-      `Friend Borrow Hygiene (₹1,000–₹2,000/mo): Log any ₹1k–₹2k borrowed from friends in your Expense Tracker with a clear note so you repay it within 30 days and keep your circle's trust 100% intact.`,
+      `Separate Fixed Rent (₹3,000) from Variable Spends: Your ₹3,000 Rent is essential—protect it on Day 1 of the month. Focus all cost-cutting on daily UPI micro-spends (tea, snacks, food delivery, impulse online orders).`,
+      `Daily ₹50 Variable UPI Cap: Set a strict daily ceiling of ₹50–₹70 for outside snacks/tea/commute extras. Switching from Swiggy/Zomato & packaged snacks to Sattvic mess/home food saves ₹1,200–₹1,800/month.`,
+      `Zero-Cost BAMS Study Resources: Use library/PDF Samhitas and group printouts with batchmates to save ₹500–₹800/month on books and stationery.`,
+      `48-Hour Pause Rule: Before any non-essential online purchase >₹300, wait 48 hours—if it isn't required for BAMS exams or clinical practice, move that ₹300 into your Stable Money FD (8.50%) or KreditBee prepayment.`,
     ],
   });
 
@@ -1930,41 +2209,37 @@ export const analyzeLifeOSData = (data: {
     problems.push({
       id: 'prob-cash-1',
       area: 'budget',
-      title: `Monthly Cash-Flow Shortfall: -₹${deficitAmount.toLocaleString('en-IN')}`,
+      title: `Cash-Flow Gap Including Full EMIs: -₹${deficitAmount.toLocaleString('en-IN')}`,
       severity: deficitAmount > 5000 ? 'critical' : 'moderate',
-      currentProblem: `Total outflow (Expenses ₹${totalExpense.toLocaleString('en-IN')} + EMIs ₹${totalMonthlyEmi.toLocaleString('en-IN')}) exceeds recorded income (₹${totalIncome.toLocaleString('en-IN')}) by ₹${deficitAmount.toLocaleString('en-IN')}.`,
-      suggestedSolution:
-        deficitAmount <= 2000
-          ? `Bridge this ₹${deficitAmount.toLocaleString('en-IN')} gap using a 1-month ₹1k–₹2k borrow from a friend and trim minor discretionary costs next month.`
-          : `Use your occasional support from your brother (up to ₹5,000) or combine with a ₹1k–₹2k friend bridge while cutting non-essential expenses.`,
+      currentProblem: `While Income (₹${totalIncome.toLocaleString('en-IN')}) > Living Expenses (₹${totalExpense.toLocaleString('en-IN')}) by +₹${(totalIncome - totalExpense).toLocaleString('en-IN')}, total outflow with all 4 EMIs (₹${totalMonthlyEmi.toLocaleString('en-IN')}/mo) creates a ₹${deficitAmount.toLocaleString('en-IN')} gap.`,
+      suggestedSolution: `1) Check if IDBI BAMS Education Loan (₹13,286/mo) is eligible for student moratorium during Final Proff/Internship. 2) Use your +₹${Math.max(0, totalIncome - totalExpense).toLocaleString('en-IN')} operating surplus + expense cuts to clear KreditBee (₹3,791/mo) first.`,
       actionableSteps: [
-        deficitAmount <= 2000
-          ? `Borrow ₹${deficitAmount.toLocaleString('en-IN')} (within your ₹1k–₹2k limit) from a friend for 30 days to keep EMIs and essentials smooth.`
-          : `Request up to ₹${Math.min(5000, deficitAmount).toLocaleString('en-IN')} from your brother (occasional buffer) so you don't touch high-interest credit.`,
-        `Prioritize repaying the friend buffer first as soon as next month's income or clinical consultation fees arrive.`,
-        `Keep daily food/travel/subscription expenses lean for the next 30 days to rebuild a ₹2,000 self-buffer.`,
+        `Verify with IDBI Bank if your BAMS Education Loan (₹4L) repayment can be deferred under study/internship moratorium so ₹13,286/mo pressure is paused until internship stipend starts.`,
+        `Keep living expenses strictly around ₹3,000–₹4,000/mo (Rent ₹3,000 + lean essentials) so your ₹2,000+ surplus directly covers KreditBee/relative installments.`,
+        `For minor ₹1,000–₹2,000 timing gaps, use a 30-day friend bridge; reserve brother support (up to ₹5,000) for non-regular exam/clinical months.`,
       ],
-      potentialBenefit: `Zero penalty/interest cost while smoothly navigating a low-income month.`,
+      potentialBenefit: `Eliminates monthly EMI crunch and saves ₹1,500–₹2,500/mo in avoidable expenses.`,
     });
   }
 
   // ============================================================================
-  // BUILD CATEGORY 3: INVESTMENTS & WEALTH PORTFOLIO
+  // BUILD CATEGORY 3: INVESTMENTS & BEST INVESTMENT PLAN (8.50% STABLE MONEY FD, RD, SIP, BONDS)
   // ============================================================================
   categoryWiseSuggestions.push({
     id: 'cat-investments',
     category: 'investments',
-    title: '3. Investments & Wealth Portfolio',
-    trackedMetricsSummary: `${data.investments.length} Investment(s) • Invested: ₹${totalInvested.toLocaleString('en-IN')} • Current Value: ₹${totalCurrentWealth.toLocaleString('en-IN')} (${portfolioGain >= 0 ? '+' : ''}₹${portfolioGain.toLocaleString('en-IN')})`,
+    title: '3. Best Investment Plan (Stable Money FD 8.50%, RD, SIP & Bonds)',
+    trackedMetricsSummary: `${data.investments.length} Active Asset(s) • Invested: ₹${totalInvested.toLocaleString('en-IN')} • Value: ₹${totalCurrentWealth.toLocaleString('en-IN')} • Monthly SIP: ₹${totalMonthlySip.toLocaleString('en-IN')}/mo`,
     statusBadge: totalCurrentWealth > 0 ? 'On Track & Optimizing' : 'Needs Attention',
     analysisSummary:
       data.investments.length > 0
-        ? `Your portfolio holds ₹${totalCurrentWealth.toLocaleString('en-IN')} across ${data.investments.length} asset(s) with a net return of ₹${portfolioGain.toLocaleString('en-IN')}.`
-        : `Your investment portfolio currently has ₹0 recorded. Building a small liquid buffer first will reduce the need to borrow ₹1k–₹2k in lean months.`,
+        ? `Your portfolio holds ₹${totalCurrentWealth.toLocaleString('en-IN')} across ${data.investments.length} asset(s) (Gain: ${portfolioGain >= 0 ? '+' : ''}₹${portfolioGain.toLocaleString('en-IN')}). Follow the 4-Pillar Asset Allocation below to maximize safe 8.50%+ FD yields and 13–15% equity compounding.`
+        : `You currently have ₹0 recorded in Investments. Starting even with ₹500–₹1,500/month across Stable Money FD (8.50% p.a.), a Recurring Deposit (RD), and a Nifty 50 SIP will build your Emergency Shield & 2028 Clinic Capital!`,
     actionableSuggestions: [
-      `First Build a ₹5,000 Personal Micro-Emergency Fund: Before locking money into long-term illiquid assets, keep ₹3,000–₹5,000 in a liquid savings/overnight fund so you become your own lender during low-income months.`,
-      `Step-Up SIP Strategy: In months where you don't need to borrow from friends or your brother, invest ₹1,000–₹3,000 into a Nifty 50 Index SIP and a dedicated "Ayurveez Clinic Capital" fund.`,
-      `Never Borrow to Invest: In months when income is low and you borrow ₹1k–₹2k from friends or up to ₹5k from your brother, pause voluntary SIP top-ups for that month and resume once cash flow normalizes.`,
+      `Pillar 1 — Stable Money FD (8.50% – 9.10% p.a. | 35% Allocation): Park your first ₹5,000–₹15,000 Emergency & EMI Buffer in a DICGC-insured Small Finance Bank FD via Stable Money (8.50%+ return, zero market risk, instant emergency withdrawal).`,
+      `Pillar 2 — Monthly RD / Bank FD (7.25% – 8.00% p.a. | 20% Allocation): Start a ₹500–₹1,000/mo Recurring Deposit for upcoming BAMS Final Proff exam fees, clinical instruments, or one-shot small loan payoff.`,
+      `Pillar 3 — Mutual Fund SIP (12.5% – 15% CAGR | 30% Allocation): Run a ₹1,000–₹2,500/mo Direct Growth SIP split between a Nifty 50 Index Fund (60%) and a Flexi-Cap Fund (40%) for your 2028 Ayurveez Clinic setup.`,
+      `Pillar 4 — Secured Corporate Bonds & Gold (9.5% – 11% p.a. | 15% Allocation): Allocate ₹500–₹1,000/mo into AAA/A+ Senior Secured Bonds (Wint Wealth / Stable Bonds) and Gold ETF / SGB as an inflation hedge.`,
     ],
   });
 
@@ -2063,14 +2338,14 @@ export const analyzeLifeOSData = (data: {
     title: 'Ayurveez Healthcare Prakriti & Diet Consultation Package',
     category: 'income_generation',
     description: `Generate ₹4,000–₹8,000/month in supplementary clinical income through weekend Ayurvedic Prakriti, Pathya-Apathya, and lifestyle consultations (8–15 patients/month @ ₹300–₹500).`,
-    actionPlan: `Use this extra ₹4k–₹8k/mo to completely eliminate the need for 1-month friend borrows (₹1k–₹2k) or brother support (₹5k) and accelerate loan payoff.`,
+    actionPlan: `Use ₹2,500/mo of this extra income to prepay KreditBee (₹22,746) and ₹1,500/mo into Stable Money FD (8.50%) + Nifty 50 SIP.`,
   });
 
   opportunities.push({
-    title: 'Self-Funded ₹5,000 Revolving Buffer Bucket',
+    title: 'Stable Money FD (8.50% p.a.) Revolving EMI Shield',
     category: 'debt_elimination',
-    description: 'By saving just ₹1,000 in good months into a separate UPI/bank pot until it reaches ₹5,000, you create your own internal interest-free bridge for low-income months.',
-    actionPlan: 'Whenever income is higher than expenses, transfer ₹1,000 to your personal buffer pot before spending on non-essentials.',
+    description: 'By parking ₹5,000–₹10,000 in a Stable Money FD earning 8.50%–9.00% p.a. (DICGC insured), your emergency fund earns the exact same rate (8.50%) as your KreditBee/Relative loans while staying 100% liquid.',
+    actionPlan: 'Transfer ₹1,000–₹2,000 every surplus month into Stable Money FD until your ₹10,000 self-buffer is complete.',
   });
 
   const computedScore = Math.max(
@@ -2089,6 +2364,42 @@ export const analyzeLifeOSData = (data: {
     overallHealthScore: computedScore,
     trackedModulesCount: 6,
     categoryWiseSuggestions,
+    investmentBlueprint: {
+      summaryHeadline: '4-Pillar Smart Investment Plan (Stable Money FD 8.50%, RD, Mutual Fund SIP & Bonds)',
+      strategyNote:
+        'Because you have active loans at 8.5%–12% p.a., your investment plan must balance Guaranteed High-Yield Liquidity (8.50% Stable Money FD & RD) with High-Growth Compounding (12–15% Equity Mutual Fund SIPs & 10% Secured Bonds/Gold).',
+      recommendations: investmentRecommendations,
+      monthlyAllocationSteps: [
+        'Phase 1 (Immediate Safety Shield): Build ₹10,000 in Stable Money FD (8.50% p.a.) + ₹500/mo RD so you never face an EMI bounce or need emergency credit.',
+        'Phase 2 (Debt-Adjusted Wealth Building): Split every monthly surplus 50% toward Priority #1 Loan Prepayment (KreditBee ₹22,746), 25% into Stable Money FD (8.50%) / RD, and 25% into Nifty 50 Index + Flexi-Cap SIP.',
+        'Phase 3 (Post-KreditBee Acceleration): Once KreditBee is cleared (freeing ₹3,791/mo), channel ₹2,000/mo into Mutual Fund SIPs & Secured Bonds (9.5–11%) and ₹1,791/mo into IDBI 12% Loan prepayment.',
+      ],
+    },
+    loanClearancePlan: {
+      totalActiveLoans: activeLoans.length,
+      totalRemainingPrincipal: totalRemaining,
+      totalMonthlyEmi,
+      strategyHeadline:
+        'Hybrid Cash-Flow Velocity + Avalanche Method (Free Up ₹4,028/mo First, Then Crush 12% IDBI Loan)',
+      rankedPayoffSteps,
+      goldenRules: [
+        'Rule 1 (Attack High-EMI / Small-Principal First): KreditBee is only ₹22,746 principal (4.7% of your total debt) yet consumes ₹3,791/mo (20% of your total EMI!). Clearing it first gives the highest monthly cash-flow relief.',
+        'Rule 2 (Wipe Out Micro-Debts Next): Clear Munchun Da (₹7,500) second so you only have 2 loans left to track.',
+        'Rule 3 (Snowball Freed EMIs into 12% IDBI Loan): Never spend freed-up EMI money on lifestyle inflation—roll it directly into your 12% IDBI Education Loan principal and 8.50% Stable Money FD.',
+      ],
+    },
+    expenseReductionPlan: {
+      totalIncome,
+      totalExpense,
+      totalOutflowWithEmi,
+      netAfterEmi,
+      auditItems: expenseAuditItems,
+      topSavingRules: [
+        'Lock Fixed Rent (₹3,000) on Day 1 and cap all variable personal/food/travel expenses via a separate UPI Lite wallet loaded with max ₹1,500/month.',
+        'Replace daily outside tea/snacks/food delivery with Sattvic home/hostel meals & roasted dry fruits — saves ₹1,200–₹1,800/mo and prevents Amlapitta.',
+        'Share reference textbooks/printouts in a 3-student BAMS study circle and batch clinical commute rides to save ₹600–₹1,000/mo.',
+      ],
+    },
     criticalProblems: problems,
     strategicOpportunities: opportunities,
   };
@@ -2167,19 +2478,19 @@ export const chatWithPersonalAI = async (
   // Context-aware intelligent fallback using live LifeOS & clinical database
   const q = message.toLowerCase();
 
-  if (q.includes('loan') || q.includes('emi') || q.includes('debt')) {
+  if (q.includes('loan') || q.includes('emi') || q.includes('debt') || q.includes('clear')) {
     if (context.loans.length === 0) {
-      return `You currently have **0 active loans** recorded (₹0/mo EMI).\n• If you have an education or personal loan, you can add it in the **Loans** section.\n• **Liquidity Tip:** In tight months, use a ₹1,000–₹2,000 1-month friend bridge rather than taking high-interest app loans.`;
+      return `You currently have **0 active loans** recorded (₹0/mo EMI).\n• Redirect surplus cash into **Stable Money FD (8.50% p.a.)** and **Nifty 50 SIP**.`;
     }
-    return `Here is your live **Loan & EMI status**:\n• **Active Loans:** ${context.loans.length} (${context.loans.map((l) => l.title).join(', ')})\n• **Remaining Balance:** ₹${remainingDebt.toLocaleString('en-IN')} (Paid: ₹${totalDebtPaid.toLocaleString('en-IN')} of ₹${totalDebt.toLocaleString('en-IN')})\n• **Monthly EMI:** ₹${monthlyEmi.toLocaleString('en-IN')}/mo\n• **Strategy:** Keep ₹${monthlyEmi.toLocaleString('en-IN')} locked 3 days before auto-debit. In surplus months, prepay ₹1,000–₹2,000 toward principal.`;
+    return `Here is your **Step-by-Step Loan Clearance Plan** (Remaining: ₹${remainingDebt.toLocaleString('en-IN')} | Total EMI: ₹${monthlyEmi.toLocaleString('en-IN')}/mo):\n1. **Priority #1 — KreditBee Loan (₹22,746 | ₹3,791/mo EMI):** Clear this first! It is only 4.7% of your total debt but takes ₹3,791/mo. Closing it frees up +₹3,791 every month.\n2. **Priority #2 — Munchun Da (₹7,500 | ₹237/mo):** Smallest balance — wipe it out next using 2 months of freed KreditBee EMI.\n3. **Priority #3 — BAMS ED. LOAN - IDBI (₹4,00,000 | 12% p.a. | ₹13,286/mo):** Highest interest rate (12%). Check student moratorium eligibility and roll freed EMIs (+₹4,028/mo) into principal prepayment.\n4. **Priority #4 — Parvesh Da (₹50,000 | 8.5% | ₹1,578/mo):** Maintain regular ₹1,578/mo family payments and clear via quarterly surpluses.`;
   }
 
-  if (q.includes('invest') || q.includes('sip') || q.includes('wealth') || q.includes('portfolio')) {
-    return `Here is your **Investment & SIP summary**:\n• **Total Invested:** ₹${totalInvested.toLocaleString('en-IN')}\n• **Current Valuation:** ₹${totalValuation.toLocaleString('en-IN')} (${totalValuation - totalInvested >= 0 ? '+' : ''}₹${(totalValuation - totalInvested).toLocaleString('en-IN')})\n• **Active Monthly SIP:** ₹${totalSip.toLocaleString('en-IN')}/mo\n• **Advice:** Maintain a ₹5,000 liquid emergency buffer first, then step up your Nifty 50 & Clinic Capital SIPs in surplus months.`;
+  if (q.includes('invest') || q.includes('sip') || q.includes('wealth') || q.includes('portfolio') || q.includes('fd') || q.includes('rd') || q.includes('stable') || q.includes('bond')) {
+    return `Here is your **Best 4-Pillar Investment Plan** (Current Portfolio: ₹${totalValuation.toLocaleString('en-IN')}):\n1. **Stable Money FD (8.50% – 9.10% p.a. | 35% Allocation):** DICGC-insured Small Finance Bank FDs (Unity/Suryoday/Utkarsh via Stable Money). Park ₹5,000–₹15,000 here first for your Emergency & EMI Safety Shield.\n2. **Bank RD / Auto-Sweep FD (7.25% – 8.00% p.a. | 20% Allocation):** ₹500–₹1,500/mo Recurring Deposit for exam fees, clinical instruments & short-term goals.\n3. **Equity Mutual Fund SIP (12.5% – 15% CAGR | 30% Allocation):** ₹1,000–₹3,000/mo in **UTI Nifty 50 Index Fund Direct Growth** + **Parag Parikh Flexi-Cap** to build your 2028 Clinic Setup Fund.\n4. **Senior Secured Bonds & Gold (9.5% – 11% p.a. | 15% Allocation):** AAA/A+ Corporate Bonds (Wint Wealth/Stable Bonds) + Gold ETF/SGB for fixed payouts & inflation protection.`;
   }
 
-  if (q.includes('expense') || q.includes('budget') || q.includes('spend') || q.includes('income') || q.includes('money')) {
-    return `Here is your **Expense & Cash Flow overview**:\n• **Recorded Income:** ₹${totalIncome.toLocaleString('en-IN')}\n• **Recorded Expenses:** ₹${totalExpense.toLocaleString('en-IN')}\n• **Net Balance (after ₹${monthlyEmi.toLocaleString('en-IN')} EMI):** ₹${(totalIncome - totalExpense - monthlyEmi).toLocaleString('en-IN')}\n• **Buffer Rule:** For minor ₹1k–₹2k gaps, use a 30-day friend bridge; reserve brother support (up to ₹5k) only for non-regular major months.`;
+  if (q.includes('expense') || q.includes('budget') || q.includes('spend') || q.includes('income') || q.includes('reduce') || q.includes('save')) {
+    return `Here is your **Expense Reduction & Cash-Flow Plan** (Income: ₹${totalIncome.toLocaleString('en-IN')} | Expenses: ₹${totalExpense.toLocaleString('en-IN')}):\n• **Fixed Rent (₹3,000):** Keep locked and pay on Day 1.\n• **Cut Daily UPI Micro-Spends (Save ₹1,200–₹1,800/mo):** Cap outside tea/snacks/Swiggy/Zomato at ₹50/day using UPI Lite; stick to Sattvic mess/home food.\n• **Study & Travel Optimization (Save ₹600–₹1,000/mo):** Use PDF Samhitas/library copies, group printouts, and shared commute rides.\n• **2-Tier Buffer:** Use a ₹1k–₹2k 30-day friend bridge for minor gaps; reserve brother support (up to ₹5k) only for non-regular exam/clinical months.`;
   }
 
   if (q.includes('habit') || q.includes('dinacharya') || q.includes('routine') || q.includes('streak')) {
@@ -2209,6 +2520,6 @@ export const chatWithPersonalAI = async (
     return `**Clinical Summary for ${matchedPreset.name}:**\n• **Dosha & Srotas:** ${matchedPreset.category} (${matchedPreset.symptoms})\n• **Key Shamana:** Check the **Medicos Area** tab in Ravi's Assistant for complete Acharya-wise Samhita Shlokas, Chikitsa Sutra, and textbook Shamana Aushadhi for ${matchedPreset.ayurvedicName}.`;
   }
 
-  return `Namaste Dr. Ravi! Here is your live snapshot & answer:\n• **Habits Today:** ${completedHabits.length}/${context.habits.length} done (${pendingHabits.length} pending)\n• **Pending Tasks:** ${pendingTasks.length} in Keep To-Do\n• **Finances:** ₹${monthlyEmi.toLocaleString('en-IN')}/mo EMI | ₹${totalValuation.toLocaleString('en-IN')} Portfolio | ₹${totalExpense.toLocaleString('en-IN')} Expenses\n• **Academic Focus:** ${activeMilestone ? activeMilestone.title : 'BAMS Final Proff'}\n\nAsk me anything specific about your **loans, expenses, habits, tasks, BAMS study plan, or Ayurvedic clinical treatments**!`;
+  return `Namaste Dr. Ravi! Here is your live snapshot & answer:\n• **Habits Today:** ${completedHabits.length}/${context.habits.length} done (${pendingHabits.length} pending)\n• **Pending Tasks:** ${pendingTasks.length} in Keep To-Do\n• **Finances:** ₹${monthlyEmi.toLocaleString('en-IN')}/mo EMI | ₹${totalValuation.toLocaleString('en-IN')} Portfolio | ₹${totalExpense.toLocaleString('en-IN')} Expenses\n• **Academic Focus:** ${activeMilestone ? activeMilestone.title : 'BAMS Final Proff'}\n\nAsk me anything specific about your **Best Investment Plan (Stable Money FD 8.50%, RD, SIP, Bonds), Loan Clearance Strategy, Expense Reduction, BAMS study plan, or Ayurvedic clinical treatments**!`;
 };
 

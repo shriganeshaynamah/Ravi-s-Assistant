@@ -22,15 +22,12 @@ import {
   Clock,
   Wind,
   Compass,
-  FileSpreadsheet,
   Download,
-  ExternalLink,
   BarChart2,
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { DINCHARYA_ROUTINE } from '../data/dincharyaData';
 import { RITUCHARYA_SEASONS, getCurrentRitucharya } from '../data/ritucharyaData';
-import { exportHabitsToCSV, exportHabitsToGoogleSheets } from '../services/googleSheets';
 import { HabitAnalysisView } from './HabitAnalysisView';
 
 interface HabitTrackerViewProps {
@@ -119,29 +116,40 @@ export const HabitTrackerView: React.FC<HabitTrackerViewProps> = ({
     };
   });
 
-  // Monthly Sheet & Habit Analysis State
+  // Monthly Habit Analysis State
   const [showMonthlyAnalysis, setShowMonthlyAnalysis] = useState(false);
   const [selectedMonth, setSelectedMonth] = useState(() => new Date().toISOString().slice(0, 7)); // e.g. "2026-10"
-  const [isExportingSheet, setIsExportingSheet] = useState(false);
-  const [sheetExportUrl, setSheetExportUrl] = useState<string | null>(null);
-  const [sheetExportError, setSheetExportError] = useState<string | null>(null);
 
   const handleExportCSV = () => {
-    exportHabitsToCSV(habits, selectedMonth);
-  };
-
-  const handleExportGoogleSheet = async () => {
-    try {
-      setIsExportingSheet(true);
-      setSheetExportError(null);
-      const res = await exportHabitsToGoogleSheets(habits, selectedMonth);
-      setSheetExportUrl(res.spreadsheetUrl);
-      confetti({ particleCount: 35, spread: 60, origin: { y: 0.7 } });
-    } catch (e: any) {
-      setSheetExportError(e.message || 'Could not export to Google Sheet. Please sign in with Google.');
-    } finally {
-      setIsExportingSheet(false);
-    }
+    const [year, month] = selectedMonth.split('-').map(Number);
+    const daysInMonth = new Date(year, month, 0).getDate();
+    const dayHeaders = Array.from({ length: daysInMonth }, (_, i) => `Day ${i + 1}`);
+    const headers = ['Habit Name', 'Category', 'Streak', 'Completed in Month', 'Completion %', ...dayHeaders];
+    const rows = habits.map((h) => {
+      const monthPrefix = `${selectedMonth}-`;
+      const completedInMonth = (h.completedDates || []).filter((d) => d.startsWith(monthPrefix)).length;
+      const pct = daysInMonth > 0 ? Math.round((completedInMonth / daysInMonth) * 100) : 0;
+      const dayMarks = Array.from({ length: daysInMonth }, (_, i) => {
+        const dStr = `${selectedMonth}-${String(i + 1).padStart(2, '0')}`;
+        return (h.completedDates || []).includes(dStr) ? 'YES' : '-';
+      });
+      return [
+        `"${(h.name || '').replace(/"/g, '""')}"`,
+        h.category,
+        String(h.streak || 0),
+        String(completedInMonth),
+        `${pct}%`,
+        ...dayMarks,
+      ].join(',');
+    });
+    const csvContent = [headers.join(','), ...rows].join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `Habits_${selectedMonth}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
   };
 
   // Monthly stats calculations for selectedMonth
@@ -336,10 +344,10 @@ export const HabitTrackerView: React.FC<HabitTrackerViewProps> = ({
               ? 'bg-emerald-600 text-white border-emerald-600 shadow-emerald-500/20'
               : 'bg-emerald-50 dark:bg-emerald-950/60 border-emerald-300 dark:border-emerald-700 text-emerald-800 dark:text-emerald-300 hover:bg-emerald-100'
           }`}
-          title="Save to Sheet & Monthly Habit Analysis"
+          title="Monthly Habit Consistency Analysis"
         >
-          <FileSpreadsheet className="w-3.5 h-3.5" />
-          <span>Save to Sheet 📊</span>
+          <BarChart2 className="w-3.5 h-3.5" />
+          <span>Monthly Stats 📊</span>
         </button>
       </div>
 
@@ -403,14 +411,14 @@ export const HabitTrackerView: React.FC<HabitTrackerViewProps> = ({
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <div className="p-2 rounded-xl bg-emerald-500 text-white shadow-xs">
-                    <FileSpreadsheet className="w-4 h-4" />
+                    <BarChart2 className="w-4 h-4" />
                   </div>
                   <div>
                     <h3 className="text-sm font-extrabold text-slate-900 dark:text-white">
-                      Monthly Habit Sheet Analysis
+                      Monthly Habit Consistency
                     </h3>
                     <p className="text-[10px] text-slate-500 dark:text-slate-400 font-medium">
-                      Analyze monthly consistency & export to spreadsheet
+                      Analyze monthly consistency (Auto-saved in Firebase Cloud)
                     </p>
                   </div>
                 </div>
@@ -439,48 +447,16 @@ export const HabitTrackerView: React.FC<HabitTrackerViewProps> = ({
                 </div>
               </div>
 
-              {/* Export Buttons: Download CSV & Save to Google Sheets */}
+              {/* Export Button: Download CSV */}
               <div className="flex items-center gap-2 flex-wrap">
                 <button
                   onClick={handleExportCSV}
                   className="flex-1 py-2 px-3 rounded-2xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-xs transition-colors cursor-pointer"
                 >
                   <Download className="w-3.5 h-3.5" />
-                  <span>Download CSV Sheet</span>
-                </button>
-
-                <button
-                  onClick={handleExportGoogleSheet}
-                  disabled={isExportingSheet}
-                  className="flex-1 py-2 px-3 rounded-2xl bg-teal-600 hover:bg-teal-500 text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-xs transition-colors cursor-pointer disabled:opacity-60"
-                >
-                  <FileSpreadsheet className="w-3.5 h-3.5" />
-                  <span>{isExportingSheet ? 'Saving to Cloud...' : 'Save to Google Sheet'}</span>
+                  <span>Download Monthly CSV</span>
                 </button>
               </div>
-
-              {/* Sheet Result Link or Error */}
-              {sheetExportUrl && (
-                <div className="p-3 rounded-2xl bg-emerald-100/80 dark:bg-emerald-950/80 border border-emerald-300 dark:border-emerald-700 text-xs text-emerald-900 dark:text-emerald-200 flex items-center justify-between gap-2">
-                  <span className="font-semibold text-[11px]">✓ Saved to your Google Drive!</span>
-                  <a
-                    href={sheetExportUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="font-bold underline text-emerald-700 dark:text-emerald-400 hover:text-emerald-900 flex items-center gap-1"
-                  >
-                    <span>Open Sheet</span>
-                    <ExternalLink className="w-3 h-3" />
-                  </a>
-                </div>
-              )}
-
-              {sheetExportError && (
-                <div className="p-2.5 rounded-xl bg-amber-50 dark:bg-amber-950/50 border border-amber-300 dark:border-amber-700 text-xs text-amber-900 dark:text-amber-200 space-y-1">
-                  <p className="text-[11px] font-medium">{sheetExportError}</p>
-                  <p className="text-[10px] text-slate-500">Tip: Use "Download CSV Sheet" above for instant offline Excel / Google Sheet import anytime.</p>
-                </div>
-              )}
 
               {/* Habit Breakdown Table */}
               <div className="space-y-2 pt-1 border-t border-emerald-200/60 dark:border-emerald-800/60">

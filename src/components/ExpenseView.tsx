@@ -6,16 +6,11 @@ import {
   TrendingDown,
   Plus,
   Trash2,
-  FileSpreadsheet,
-  ExternalLink,
-  CheckCircle,
-  AlertCircle,
   PiggyBank,
   Wallet,
   ArrowUpRight,
   ArrowDownLeft,
 } from 'lucide-react';
-import { exportExpensesToGoogleSheets } from '../services/googleSheets';
 import { ConfirmationModal } from './ConfirmationModal';
 import type { User } from 'firebase/auth';
 
@@ -36,9 +31,6 @@ export const ExpenseView: React.FC<ExpenseViewProps> = ({
 }) => {
   const [filterType, setFilterType] = useState<'all' | 'income' | 'expense'>('all');
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
-  const [isExporting, setIsExporting] = useState(false);
-  const [exportedSheetUrl, setExportedSheetUrl] = useState<string | null>(null);
-  const [exportError, setExportError] = useState<string | null>(null);
 
   // Deletion state
   const [recordToDelete, setRecordToDelete] = useState<ExpenseRecord | null>(null);
@@ -62,28 +54,6 @@ export const ExpenseView: React.FC<ExpenseViewProps> = ({
 
   const netSurplus = totalIncome - totalExpense;
   const savingsRate = totalIncome > 0 ? Math.round((netSurplus / totalIncome) * 100) : 0;
-
-  const handleExportSheets = async () => {
-    if (!user) {
-      onRequireAuth();
-      return;
-    }
-
-    setIsExporting(true);
-    setExportError(null);
-    try {
-      const result = await exportExpensesToGoogleSheets(
-        expenses,
-        'Dr. Ravi Shankar - LifeOS Financial Ledger'
-      );
-      setExportedSheetUrl(result.spreadsheetUrl);
-    } catch (err: any) {
-      console.error('Failed to export to Google Sheets:', err);
-      setExportError(err.message || 'Failed to export to Google Sheets');
-    } finally {
-      setIsExporting(false);
-    }
-  };
 
   const handleCreateRecord = (e: React.FormEvent) => {
     e.preventDefault();
@@ -127,16 +97,6 @@ export const ExpenseView: React.FC<ExpenseViewProps> = ({
 
         <div className="flex items-center gap-2 flex-wrap">
           <button
-            onClick={handleExportSheets}
-            disabled={isExporting}
-            className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-emerald-300 border border-emerald-500/30 font-medium text-xs flex items-center gap-2 transition-all cursor-pointer shadow-xs"
-            title="Export all rows to Google Sheets"
-          >
-            <FileSpreadsheet className="w-4 h-4 text-emerald-400" />
-            <span>{isExporting ? 'Exporting...' : 'Export to Google Sheets'}</span>
-          </button>
-
-          <button
             onClick={() => setIsAddModalOpen(true)}
             className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-medium text-xs flex items-center gap-1.5 shadow-md shadow-emerald-950/40 transition-all cursor-pointer"
           >
@@ -145,37 +105,6 @@ export const ExpenseView: React.FC<ExpenseViewProps> = ({
           </button>
         </div>
       </div>
-
-      {/* Google Sheets export success link */}
-      {exportedSheetUrl && (
-        <div className="p-4 rounded-2xl bg-emerald-950/40 border border-emerald-500/40 text-emerald-200 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-lg">
-          <div className="flex items-center gap-2">
-            <CheckCircle className="w-5 h-5 text-emerald-400 shrink-0" />
-            <div>
-              <p className="font-semibold text-white">Google Sheet Created Successfully!</p>
-              <p className="text-emerald-300/80">
-                All {expenses.length} financial transactions are synced with formatted columns and frozen header.
-              </p>
-            </div>
-          </div>
-          <a
-            href={exportedSheetUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs flex items-center justify-center gap-1.5 shadow-md shrink-0 cursor-pointer"
-          >
-            <span>Open in Google Sheets</span>
-            <ExternalLink className="w-3.5 h-3.5" />
-          </a>
-        </div>
-      )}
-
-      {exportError && (
-        <div className="p-3 rounded-xl bg-rose-500/20 border border-rose-500/30 text-rose-300 text-xs flex items-center gap-2">
-          <AlertCircle className="w-4 h-4 shrink-0" />
-          <span>{exportError}</span>
-        </div>
-      )}
 
       {/* Financial Pulse Summary Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">

@@ -152,7 +152,7 @@ export const HamburgerDrawer: React.FC<HamburgerDrawerProps> = ({
             </button>
           </div>
 
-          {/* Embedded Google Cloud Sync Button inside Dr. Ravi Shankar Box */}
+          {/* Embedded Cloud Sync Button inside Dr. Ravi Shankar Box */}
           <button
             onClick={() => {
               onSelectFeature('cloud');
@@ -162,10 +162,10 @@ export const HamburgerDrawer: React.FC<HamburgerDrawerProps> = ({
           >
             <div className="flex items-center gap-2">
               <Cloud className="w-4 h-4 text-emerald-100" />
-              <span>Google Cloud Sync</span>
+              <span>Cloud Sync</span>
             </div>
             <span className="text-[9px] uppercase tracking-wider bg-black/20 px-1.5 py-0.5 rounded font-mono">
-              Drive / Sheets
+              Auto-Save ✓
             </span>
           </button>
 
@@ -174,24 +174,31 @@ export const HamburgerDrawer: React.FC<HamburgerDrawerProps> = ({
 
           {/* Google Auth status bar */}
           <div className="mt-2.5 pt-2 border-t border-white/10 flex items-center justify-between text-xs">
-            <span className="text-[10px] opacity-80 truncate max-w-[150px]">
-              {user ? user.email : 'Google: Offline'}
+            <span className="text-[10px] opacity-90 truncate max-w-[170px] flex items-center gap-1 font-medium">
+              {user?.email ? (
+                <>
+                  <CheckCircle2 className="w-3 h-3 text-emerald-400 shrink-0" />
+                  <span className="truncate">Connected ({user.email})</span>
+                </>
+              ) : (
+                <span>Gmail: Not Connected</span>
+              )}
             </span>
-            {user ? (
+            {user?.email ? (
               <button
                 onClick={onSignOut}
-                className="text-[10px] font-bold text-rose-300 hover:underline flex items-center gap-1 cursor-pointer"
+                className="text-[10px] font-bold text-rose-300 hover:underline flex items-center gap-1 cursor-pointer shrink-0"
               >
                 <LogOut className="w-3 h-3" />
-                <span>Sign Out</span>
+                <span>Disconnect</span>
               </button>
             ) : (
               <button
                 onClick={onSignIn}
-                className="text-[10px] font-bold text-emerald-300 hover:underline flex items-center gap-1 cursor-pointer"
+                className="text-[10px] font-bold text-emerald-300 hover:underline flex items-center gap-1 cursor-pointer shrink-0"
               >
                 <LogIn className="w-3 h-3" />
-                <span>Connect Google</span>
+                <span>Connect Gmail</span>
               </button>
             )}
           </div>

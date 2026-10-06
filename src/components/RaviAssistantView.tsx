@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { getQuestionSpecificQuickAnswers } from '../utils/prashnaQuickAnswers';
-import { getStoredData, setStoredData } from '../services/storage';
+import { getStoredData, setStoredData, getAllArchivedAndCurrentExpenses } from '../services/storage';
 import type {
   LoanItem,
   InvestmentItem,
@@ -86,23 +86,275 @@ export const RaviAssistantView: React.FC<RaviAssistantViewProps> = ({
 }) => {
   const [activeTab, setActiveTab] = useState<'solver' | 'medics'>('solver');
 
-  // LifeOS Problem Solver Analysis
-  const solverAnalysis = useMemo(() => {
-    return analyzeLifeOSData({
-      loans,
-      investments,
-      expenses,
-      habits,
-      dinacharyaLogs,
-      milestones,
-      tasks,
-    });
-  }, [loans, investments, expenses, habits, dinacharyaLogs, milestones, tasks]);
+  // All stored expenses (current + monthly archive)
+  const allExpenses = useMemo(() => getAllArchivedAndCurrentExpenses(expenses), [expenses]);
 
-  // Custom AI Query for LifeOS Solver
-  const [customSolverQuery, setCustomSolverQuery] = useState('');
-  const [isSolvingCustom, setIsSolvingCustom] = useState(false);
-  const [customSolverResult, setCustomSolverResult] = useState<string | null>(null);
+  // Live metrics from actual stored data
+  const liveStats = useMemo(() => {
+    const totalIncome = allExpenses
+      .filter((e) => e.type === 'income')
+      .reduce((s, e) => s + e.amount, 0);
+    const totalOutflow = allExpenses
+      .filter((e) => e.type === 'expense')
+      .reduce((s, e) => s + e.amount, 0);
+    const netBalance = totalIncome - totalOutflow;
+    const activeLoans = loans.filter((l) => l.principalAmount - l.totalPaid > 0);
+    const totalLoanRemaining = activeLoans.reduce(
+      (s, l) => s + Math.max(0, l.principalAmount - l.totalPaid),
+      0
+    );
+    const totalInvested = investments.reduce((s, i) => s + (i.currentValue || 0), 0);
+    return {
+      totalIncome,
+      totalOutflow,
+      netBalance,
+      activeLoansCount: activeLoans.length,
+      totalLoanRemaining,
+      totalInvested,
+    };
+  }, [allExpenses, loans, investments]);
+
+  // AI Pattern Analysis State (Triggered when user clicks "Run Analysis AI")
+  interface ConciseAiSolverResult {
+    patternSummary: string;
+    monthlyPotentialSavings: number;
+    expenseReduction: {
+      category: string;
+      spentAmount: number;
+      saveTarget: number;
+      patternObserved: string;
+      actionTip: string;
+    }[];
+    loanClearance: {
+      priorityRank: number;
+      loanTitle: string;
+      lender: string;
+      remainingAmount: number;
+      payoffTimeline: string;
+      clearStrategy: string;
+    }[];
+    investmentPlan: {
+      instrumentName: string;
+      returnRate: string;
+      allocationPercent: number;
+      suggestedMonthlyRs: number;
+      riskTag: string;
+      shortReason: string;
+    }[];
+    analyzedAt: string;
+  }
+
+  const [aiSolverResult, setAiSolverResult] = useState<ConciseAiSolverResult | null>(null);
+  const [isRunningAiSolver, setIsRunningAiSolver] = useState(false);
+  const [solverSectionFilter, setSolverSectionFilter] = useState<
+    'all' | 'expenses' | 'loans' | 'investments'
+  >('all');
+
+  // Helper to build dynamic pattern analysis directly from user's real records if offline/fallback
+  const buildDynamicPatternFallback = (): ConciseAiSolverResult => {
+    const categoryTotals: Record<string, { total: number; items: string[] }> = {};
+    allExpenses
+      .filter((e) => e.type === 'expense')
+      .forEach((e) => {
+        const cat = e.category || 'other';
+        if (!categoryTotals[cat]) categoryTotals[cat] = { total: 0, items: [] };
+        categoryTotals[cat].total += e.amount;
+        if (e.description && categoryTotals[cat].items.length < 3) {
+          categoryTotals[cat].items.push(`${e.description} (₹${e.amount})`);
+        }
+      });
+
+    const catLabels: Record<string, string> = {
+      living_personal: 'Living & Personal',
+      food_dining: 'Food & Dining',
+      travel_commute: 'Travel & Commute',
+      study_books: 'Books & Study',
+      clinic_consultation: 'Clinic Supplies',
+      loan_emi: 'Loan EMI',
+      investment: 'Investment',
+      other: 'Other Spends',
+    };
+
+    const sortedCategories = Object.entries(categoryTotals)
+      .sort((a, b) => b[1].total - a[1].total)
+      .map(([catKey, data]) => {
+        const isPersonal = catKey === 'living_personal' || catKey === 'other';
+        const isFood = catKey === 'food_dining';
+        const savePct = isFood ? 0.25 : isPersonal ? 0.15 : 0.15;
+        const saveTarget = Math.max(150, Math.round(data.total * savePct));
+        const topSamples = data.items.slice(0, 2).join(', ') || 'Recorded entries';
+
+        let actionTip = 'Cap non-essential spends by 15% and move savings to 8.50% FD.';
+        if (isPersonal) {
+          actionTip = 'Keep fixed rent separate; cap variable personal/UPI transfers by 15%.';
+        } else if (isFood) {
+          actionTip = 'Prefer mess meals & Sattvic fruits/nuts over frequent outside snacks.';
+        } else if (catKey === 'travel_commute') {
+          actionTip = 'Book train tickets early and batch local trips to cut transit cost.';
+        } else if (catKey === 'study_books') {
+          actionTip = 'Use library/PDFs for reference texts; buy hardcopies only for core Samhitas.';
+        }
+
+        return {
+          category: catLabels[catKey] || catKey,
+          spentAmount: data.total,
+          saveTarget,
+          patternObserved: `Top entries: ${topSamples}`,
+          actionTip,
+        };
+      });
+
+    const totalPotentialSave = sortedCategories.reduce((s, c) => s + c.saveTarget, 0);
+
+    const rankedLoans = loans
+      .map((l) => ({
+        ...l,
+        remaining: Math.max(0, l.principalAmount - l.totalPaid),
+      }))
+      .filter((l) => l.remaining > 0)
+      .sort((a, b) => {
+        if (a.remaining <= 15000 && b.remaining > 15000) return -1;
+        if (b.remaining <= 15000 && a.remaining > 15000) return 1;
+        if ((b.interestRate || 0) !== (a.interestRate || 0)) {
+          return (b.interestRate || 0) - (a.interestRate || 0);
+        }
+        return a.remaining - b.remaining;
+      })
+      .map((l, i) => ({
+        priorityRank: i + 1,
+        loanTitle: l.title,
+        lender: l.lender,
+        remainingAmount: l.remaining,
+        payoffTimeline:
+          l.remaining <= 5000
+            ? 'Month 1 (Quick Win)'
+            : l.remaining <= 15000
+            ? 'Months 1–2'
+            : l.remaining <= 60000
+            ? 'Monthly RD / Installments'
+            : 'Quarterly FD Tranches',
+        clearStrategy:
+          l.remaining <= 10000
+            ? `Smallest balance (₹${l.remaining.toLocaleString('en-IN')}). Pay off first from monthly expense savings to close this lender.`
+            : l.remaining <= 60000
+            ? `Allocate ₹3,500–₹4,500/mo after clearing smaller dues to close this ₹${l.remaining.toLocaleString('en-IN')} loan steadily.`
+            : `Park monthly surplus in 8.50% Stable Money FD and pay ₹25k–₹50k quarterly lump sums toward principal.`,
+      }));
+
+    const monthlySurplus = Math.max(2000, Math.max(0, liveStats.netBalance) + totalPotentialSave);
+    const hasLoans = liveStats.totalLoanRemaining > 0;
+
+    const investmentPlan = hasLoans
+      ? [
+          {
+            instrumentName: '1. Direct Loan Prepayment Allocation (Top Priority)',
+            returnRate: 'Debt-Free ROI',
+            allocationPercent: 50,
+            suggestedMonthlyRs: Math.round((monthlySurplus * 0.5) / 100) * 100 || 1500,
+            riskTag: 'Highest Priority • Clear Debt First',
+            shortReason: `With ₹${liveStats.totalLoanRemaining.toLocaleString('en-IN')} in active loans, use 50% of surplus to close small loans first before locking money away.`,
+          },
+          {
+            instrumentName: '2. Liquid High-Yield FD / Emergency Buffer',
+            returnRate: '8.0% – 8.50% p.a.',
+            allocationPercent: 35,
+            suggestedMonthlyRs: Math.round((monthlySurplus * 0.35) / 100) * 100 || 1000,
+            riskTag: 'Zero Risk • 100% Liquid',
+            shortReason:
+              'Keep emergency cash & lump-sum loan part-payment funds safe and liquid so you never need to borrow again.',
+          },
+          {
+            instrumentName: '3. Single Nifty 50 / Flexi-Cap Starter SIP',
+            returnRate: '13% – 15% CAGR',
+            allocationPercent: 15,
+            suggestedMonthlyRs: Math.round((monthlySurplus * 0.15) / 100) * 100 || 500,
+            riskTag: 'Long-Term Habit • Avoid Over-Spreading',
+            shortReason:
+              'Run just 1 low-cost SIP for future clinic wealth; avoid locking budget in bonds or multiple funds until loans are cleared.',
+          },
+        ]
+      : [
+          {
+            instrumentName: '1. Nifty 50 + Flexi-Cap Equity SIP',
+            returnRate: '13% – 15% CAGR',
+            allocationPercent: 60,
+            suggestedMonthlyRs: Math.round((monthlySurplus * 0.6) / 100) * 100 || 2000,
+            riskTag: 'Core Wealth Builder',
+            shortReason: 'With zero debt, channel 60% of surplus into equity SIPs for long-term compounding.',
+          },
+          {
+            instrumentName: '2. High-Yield FD / Emergency Reserve',
+            returnRate: '8.0% – 8.50% p.a.',
+            allocationPercent: 40,
+            suggestedMonthlyRs: Math.round((monthlySurplus * 0.4) / 100) * 100 || 1500,
+            riskTag: 'Safe Liquid Reserve',
+            shortReason: 'Builds a risk-free liquid reserve for future clinic setup & emergencies.',
+          },
+        ];
+
+    return {
+      patternSummary: `Income ₹${liveStats.totalIncome.toLocaleString('en-IN')} vs Expenses ₹${liveStats.totalOutflow.toLocaleString('en-IN')} (Net ₹${liveStats.netBalance.toLocaleString('en-IN')}) • ${liveStats.activeLoansCount} active loans (₹${liveStats.totalLoanRemaining.toLocaleString('en-IN')} left).`,
+      monthlyPotentialSavings: totalPotentialSave,
+      expenseReduction: sortedCategories,
+      loanClearance: rankedLoans,
+      investmentPlan,
+      analyzedAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+    };
+  };
+
+  const handleRunAiSolverAnalysis = async () => {
+    setIsRunningAiSolver(true);
+    try {
+      const response = await fetch('/api/gemini/lifeos-solver', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          expenses: allExpenses.slice(0, 60).map((e) => ({
+            date: e.date,
+            type: e.type,
+            category: e.category,
+            amount: e.amount,
+            description: e.description,
+          })),
+          loans: loans.map((l) => ({
+            title: l.title,
+            lender: l.lender,
+            principalAmount: l.principalAmount,
+            totalPaid: l.totalPaid,
+            remaining: Math.max(0, l.principalAmount - l.totalPaid),
+            interestRate: l.interestRate,
+            monthlyEmi: l.monthlyEmi,
+            status: l.status,
+          })),
+          investments: investments.map((i) => ({
+            title: i.title,
+            platform: i.platform,
+            category: i.category,
+            investedAmount: i.investedAmount,
+            currentValue: i.currentValue,
+            expectedReturnRate: i.expectedReturnRate,
+            sipMonthly: i.sipMonthly,
+          })),
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error('Server AI endpoint unavailable');
+      }
+
+      const data = await response.json();
+      const parsed = JSON.parse(data.text);
+      setAiSolverResult({
+        ...parsed,
+        analyzedAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      });
+    } catch {
+      // Dynamic pattern analysis computed from user's live records
+      setAiSolverResult(buildDynamicPatternFallback());
+    } finally {
+      setIsRunningAiSolver(false);
+    }
+  };
 
   // Medics Section State (Persisted automatically so data is never lost across app/APK launches)
   const savedMedicsDraft = useMemo(
@@ -528,28 +780,6 @@ Doctor: Dr. Ravi Shankar, BAMS`;
     setTimeout(() => setIsCopiedDDx(false), 2000);
   };
 
-  const handleSolveCustomQuery = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!customSolverQuery.trim()) return;
-    setIsSolvingCustom(true);
-    setCustomSolverResult(null);
-
-    // Contextual intelligent prompt for Dr. Ravi
-    setTimeout(() => {
-      const q = customSolverQuery.toLowerCase();
-      let res = '';
-      if (q.includes('loan') || q.includes('emi') || q.includes('debt') || q.includes('money') || q.includes('short') || q.includes('expense') || q.includes('brother') || q.includes('friend')) {
-        res = `Strategic Debt & Low-Income Month Liquidity Plan for Dr. Ravi Shankar:\n1. Tier-1 Minor Shortfall Bridge (₹1,000–₹2,000): If monthly income dips and you are short by ₹1,000–₹2,000 for essentials or EMI, borrow ₹1k–₹2k interest-free from a trusted friend for 1 month and repay it first from next month's inflow.\n2. Tier-2 Occasional Larger Shortfall (Up to ₹5,000): Only in non-regular months where exams, clinical postings, or unavoidable expenses create a larger gap (up to ₹5,000), request up to ₹5,000 from your brother rather than touching high-interest credit apps.\n3. Accelerated Principal Reduction: In surplus months, allocate ₹1,000–₹2,000 extra directly to loan principal and build a ₹5,000 personal buffer pot so you gradually become 100% self-funded.`;
-      } else if (q.includes('clinic') || q.includes('future') || q.includes('setup')) {
-        res = `Flagship Ayurvedic Clinic 2027 Strategic Blueprint:\n1. Location & Setup: Target Tier 1 or Tier 2 high-density residential area with proximity to Ayurvedic pharmacies. Estimated initial capex: ₹3.5L (Droni, Swedana box, consultation setup, initial Kashaya/Guggulu inventory).\n2. Specialized Core Niche: Differentiate through Agnikarma, Viddhakarma, and Joint & Spine Care (Sandhi-Vata Chikitsa), which deliver immediate symptomatic relief and drive word-of-mouth patient trust.\n3. Cash Buffer: Maintain a dedicated ₹4,000/mo automated SIP fund today to accumulate ₹2.2L+ safe capital before completion of internship.`;
-      } else {
-        res = `LifeOS Strategic Recommendation for Dr. Ravi Shankar:\n• Financial Health: Maintain your current ₹5,000 SIP discipline while steadily preparing for loan prepayment.\n• Clinical Acumen: Dedicate 90 minutes daily to Charaka Samhita Chikitsa Sthana and case diary analysis.\n• Dinacharya: Prioritize 4:30 AM Brahma Muhurta waking with warm Ushnodaka to preserve mental Ojas throughout rigorous hospital rounds.`;
-      }
-      setCustomSolverResult(res);
-      setIsSolvingCustom(false);
-    }, 600);
-  };
-
   if (showPrescriptionPad && medicsResult) {
     return (
       <PrescriptionPadView
@@ -625,306 +855,348 @@ Doctor: Dr. Ravi Shankar, BAMS`;
       </div>
 
       {/* ============================================================== */}
-      {/* SECTION 1: LIFE OS REVIEW & STRATEGIC PROBLEM SOLVER           */}
+      {/* SECTION 1: LIFE OS SOLVER (CONCISE AI PATTERN ANALYSIS)        */}
       {/* ============================================================== */}
       {activeTab === 'solver' && (
         <div className="space-y-4 animate-in fade-in">
-          {/* Health Score & Live Summary Strip */}
+          {/* Live Data Snapshot & "Run Analysis AI" Trigger Bar */}
           <div
-            className={`p-4 rounded-2xl border transition-all shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4 ${
+            className={`p-4 rounded-3xl border transition-all shadow-xs space-y-3.5 ${
               isDark ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'
             }`}
           >
-            <div className="flex items-center gap-3">
-              <div className="w-12 h-12 rounded-2xl bg-linear-to-br from-emerald-500 to-teal-600 text-white flex flex-col items-center justify-center font-mono shadow-xs shrink-0">
-                <span className="text-base font-black leading-none">
-                  {solverAnalysis.overallHealthScore}
-                </span>
-                <span className="text-[8px] font-bold uppercase opacity-90">/ 100</span>
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <div className="w-11 h-11 rounded-2xl bg-linear-to-br from-emerald-500 to-teal-600 text-white flex items-center justify-center shadow-xs shrink-0">
+                  <Sparkles className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-extrabold text-slate-900 dark:text-white">
+                    AI Financial &amp; LifeOS Pattern Solver
+                  </h3>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                    Scans your live expenses, loans &amp; investments to generate a concise plan
+                  </p>
+                </div>
               </div>
-              <div>
-                <h4 className="text-xs font-bold uppercase tracking-wider text-slate-900 dark:text-white">
-                  LifeOS Status &amp; Financial Health Index
-                </h4>
-                <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
-                  Scanning live loans, investments, cash flow, BAMS milestones &amp; 30-day habits
-                </p>
-              </div>
+
+              <button
+                onClick={handleRunAiSolverAnalysis}
+                disabled={isRunningAiSolver}
+                className="px-4 py-2.5 rounded-2xl bg-linear-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-extrabold text-xs flex items-center justify-center gap-2 shadow-md shadow-emerald-600/20 cursor-pointer transition-all active:scale-95 disabled:opacity-60 shrink-0"
+              >
+                {isRunningAiSolver ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                    <span>Analyzing Your Patterns...</span>
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="w-4 h-4" />
+                    <span>{aiSolverResult ? 'Re-Run Analysis AI' : 'Run Analysis AI'}</span>
+                  </>
+                )}
+              </button>
             </div>
 
-            <div className="flex items-center gap-2 text-xs flex-wrap">
-              <div className="px-2.5 py-1 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
-                <span className="text-[9px] text-slate-400 font-bold uppercase block">Active EMIs</span>
-                <span className="font-extrabold text-rose-500 font-mono text-xs">
-                  ₹{loans.filter((l) => l.status === 'active').reduce((sum, l) => sum + (l.monthlyEmi || 0), 0).toLocaleString('en-IN')}/mo
+            {/* Compact 4-Metric Live Data Strip */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs pt-1">
+              <div className="p-2.5 rounded-2xl bg-emerald-500/10 border border-emerald-500/20">
+                <span className="text-[9px] text-slate-500 dark:text-slate-400 font-bold uppercase block">
+                  Recorded Income
+                </span>
+                <span className="font-black text-emerald-600 dark:text-emerald-400 font-mono text-sm">
+                  ₹{liveStats.totalIncome.toLocaleString('en-IN')}
                 </span>
               </div>
-              <div className="px-2.5 py-1 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
-                <span className="text-[9px] text-slate-400 font-bold uppercase block">Wealth Portfolio</span>
-                <span className="font-extrabold text-emerald-600 dark:text-emerald-400 font-mono text-xs">
-                  ₹{investments.reduce((sum, i) => sum + (i.currentValue || 0), 0).toLocaleString('en-IN')}
+              <div className="p-2.5 rounded-2xl bg-rose-500/10 border border-rose-500/20">
+                <span className="text-[9px] text-slate-500 dark:text-slate-400 font-bold uppercase block">
+                  Recorded Expenses
+                </span>
+                <span className="font-black text-rose-600 dark:text-rose-400 font-mono text-sm">
+                  ₹{liveStats.totalOutflow.toLocaleString('en-IN')}
                 </span>
               </div>
-              <div className="px-2.5 py-1 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
-                <span className="text-[9px] text-slate-400 font-bold uppercase block">Tracked Modules</span>
-                <span className="font-extrabold text-teal-600 dark:text-teal-400 font-mono text-xs">
-                  {solverAnalysis.trackedModulesCount} Live (Excl. Journals)
+              <div className="p-2.5 rounded-2xl bg-indigo-500/10 border border-indigo-500/20">
+                <span className="text-[9px] text-slate-500 dark:text-slate-400 font-bold uppercase block">
+                  Loans Left ({liveStats.activeLoansCount})
+                </span>
+                <span className="font-black text-indigo-600 dark:text-indigo-400 font-mono text-sm">
+                  ₹{liveStats.totalLoanRemaining.toLocaleString('en-IN')}
                 </span>
               </div>
-              <div className="px-2.5 py-1 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
-                <span className="text-[9px] text-slate-400 font-bold uppercase block">Active Problems</span>
-                <span className="font-extrabold text-amber-500 font-mono text-xs">
-                  {solverAnalysis.criticalProblems.length} Detected
+              <div className="p-2.5 rounded-2xl bg-teal-500/10 border border-teal-500/20">
+                <span className="text-[9px] text-slate-500 dark:text-slate-400 font-bold uppercase block">
+                  Investments ({investments.length})
+                </span>
+                <span className="font-black text-teal-600 dark:text-teal-400 font-mono text-sm">
+                  ₹{liveStats.totalInvested.toLocaleString('en-IN')}
                 </span>
               </div>
             </div>
           </div>
 
-          {/* 6-Category Comprehensive LifeOS Tracker & Suggestions (Excludes Life Journals) */}
-          <div className="space-y-3">
-            <div className="flex items-center justify-between flex-wrap gap-2">
-              <h3 className="text-xs font-bold uppercase tracking-wider text-slate-900 dark:text-white flex items-center gap-1.5">
-                <Layers className="w-3.5 h-3.5 text-teal-500" />
-                <span>Comprehensive LifeOS Tracker &amp; Suggestions (All 6 Modules • Excludes Life Journals)</span>
-              </h3>
-              <span className="text-[10px] font-semibold text-emerald-600 dark:text-emerald-400">
-                Includes ₹1k–₹2k Friend (1-Mo) &amp; ₹5k Brother (Occasional) Buffer Rules
-              </span>
+          {/* Empty State before clicking "Run Analysis AI" */}
+          {!aiSolverResult && !isRunningAiSolver && (
+            <div
+              className={`p-8 rounded-3xl border text-center space-y-3 ${
+                isDark ? 'bg-slate-900/70 border-slate-800' : 'bg-white border-slate-200'
+              }`}
+            >
+              <div className="w-12 h-12 rounded-2xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-500 flex items-center justify-center mx-auto">
+                <Brain className="w-6 h-6" />
+              </div>
+              <div className="space-y-1 max-w-md mx-auto">
+                <h4 className="text-sm font-extrabold text-slate-900 dark:text-white">
+                  Ready to Analyze Your Live Financial Patterns
+                </h4>
+                <p className="text-xs text-slate-500 dark:text-slate-400">
+                  Click <strong>Run Analysis AI</strong> above to scan your {allExpenses.length} transactions, {loans.length} loans, and {investments.length} investments for a precise, clutter-free plan on <strong>Where to Reduce Expense</strong>, <strong>How to Clear Loans</strong>, and your <strong>Best Investment Plan</strong>.
+                </p>
+              </div>
             </div>
+          )}
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              {solverAnalysis.categoryWiseSuggestions.map((cat) => (
-                <div
-                  key={cat.id}
-                  className={`p-4 rounded-2xl border transition-all shadow-xs space-y-2.5 flex flex-col justify-between ${
-                    isDark ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'
+          {/* Loading Skeleton while AI runs */}
+          {isRunningAiSolver && (
+            <div
+              className={`p-8 rounded-3xl border text-center space-y-3 animate-pulse ${
+                isDark ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'
+              }`}
+            >
+              <RefreshCw className="w-7 h-7 text-emerald-500 animate-spin mx-auto" />
+              <p className="text-xs font-bold text-slate-700 dark:text-slate-300">
+                AI is analyzing your spending categories, loan balances &amp; monthly surplus...
+              </p>
+            </div>
+          )}
+
+          {/* AI Results (Shown after clicking Run Analysis AI) */}
+          {aiSolverResult && !isRunningAiSolver && (
+            <div className="space-y-3.5 animate-in fade-in">
+              {/* 1-Line Pattern Summary Banner */}
+              <div
+                className={`p-3 rounded-2xl border flex flex-wrap items-center justify-between gap-2 text-xs ${
+                  isDark
+                    ? 'bg-emerald-950/30 border-emerald-500/30 text-emerald-200'
+                    : 'bg-emerald-50 border-emerald-200 text-emerald-900'
+                }`}
+              >
+                <div className="flex items-center gap-2 font-semibold">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
+                  <span>{aiSolverResult.patternSummary}</span>
+                </div>
+                <span className="text-[10px] font-mono opacity-75">
+                  AI Synced at {aiSolverResult.analyzedAt}
+                </span>
+              </div>
+
+              {/* 3 Dedicated Action Filter Buttons on LifeOS Solver Page */}
+              <div className="flex flex-wrap gap-1.5">
+                <button
+                  onClick={() => setSolverSectionFilter('all')}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold cursor-pointer transition-all ${
+                    solverSectionFilter === 'all'
+                      ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900 shadow-xs'
+                      : 'bg-slate-200/70 dark:bg-slate-800 text-slate-600 dark:text-slate-300'
                   }`}
                 >
-                  <div className="space-y-2">
-                    <div className="flex items-start justify-between gap-2">
-                      <div>
-                        <h4 className="text-xs font-extrabold text-slate-900 dark:text-white">
-                          {cat.title}
-                        </h4>
-                        <p className="text-[10px] font-mono font-bold text-teal-600 dark:text-teal-400 mt-0.5">
-                          {cat.trackedMetricsSummary}
-                        </p>
-                      </div>
-                      <span
-                        className={`text-[9px] font-bold px-2 py-0.5 rounded-full shrink-0 ${
-                          cat.statusBadge === 'Critical Action'
-                            ? 'bg-rose-600 text-white'
-                            : cat.statusBadge === 'Needs Attention'
-                            ? 'bg-amber-500 text-white'
-                            : 'bg-emerald-500/20 text-emerald-600 dark:text-emerald-300 border border-emerald-500/30'
+                  All 3 Plans
+                </button>
+                <button
+                  onClick={() => setSolverSectionFilter('expenses')}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-all ${
+                    solverSectionFilter === 'expenses'
+                      ? 'bg-amber-600 text-white shadow-xs'
+                      : 'bg-amber-500/10 text-amber-700 dark:text-amber-300 border border-amber-500/30'
+                  }`}
+                >
+                  <DollarSign className="w-3.5 h-3.5" />
+                  <span>Where to Reduce Expense</span>
+                </button>
+                <button
+                  onClick={() => setSolverSectionFilter('loans')}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-all ${
+                    solverSectionFilter === 'loans'
+                      ? 'bg-rose-600 text-white shadow-xs'
+                      : 'bg-rose-500/10 text-rose-600 dark:text-rose-300 border border-rose-500/30'
+                  }`}
+                >
+                  <CreditCard className="w-3.5 h-3.5" />
+                  <span>How to Clear Loans</span>
+                </button>
+                <button
+                  onClick={() => setSolverSectionFilter('investments')}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-all ${
+                    solverSectionFilter === 'investments'
+                      ? 'bg-teal-600 text-white shadow-xs'
+                      : 'bg-teal-500/10 text-teal-700 dark:text-teal-300 border border-teal-500/30'
+                  }`}
+                >
+                  <TrendingUp className="w-3.5 h-3.5" />
+                  <span>Best Investment Plan</span>
+                </button>
+              </div>
+
+              {/* 1. WHERE TO REDUCE EXPENSE */}
+              {(solverSectionFilter === 'all' || solverSectionFilter === 'expenses') && (
+                <div
+                  className={`p-4 rounded-3xl border space-y-2.5 ${
+                    isDark ? 'bg-slate-900 border-amber-500/30' : 'bg-white border-amber-200 shadow-xs'
+                  }`}
+                >
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-xs font-extrabold uppercase tracking-wider text-amber-600 dark:text-amber-400 flex items-center gap-1.5">
+                      <DollarSign className="w-4 h-4" />
+                      <span>1. Where to Reduce Expense (Save ~₹{aiSolverResult.monthlyPotentialSavings.toLocaleString('en-IN')}/mo)</span>
+                    </h4>
+                    <button
+                      onClick={() => onNavigate('expense')}
+                      className="text-[10px] font-bold text-amber-600 dark:text-amber-400 hover:underline flex items-center gap-0.5 cursor-pointer"
+                    >
+                      <span>Expenses</span>
+                      <ChevronRight className="w-3 h-3" />
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-xs">
+                    {aiSolverResult.expenseReduction.map((item, idx) => (
+                      <div
+                        key={idx}
+                        className={`p-3 rounded-2xl border space-y-1 ${
+                          isDark ? 'bg-slate-800/70 border-slate-700' : 'bg-amber-50/40 border-amber-200/70'
                         }`}
                       >
-                        {cat.statusBadge}
-                      </span>
-                    </div>
-
-                    <p className="text-[11px] text-slate-600 dark:text-slate-300 leading-snug">
-                      {cat.analysisSummary}
-                    </p>
-
-                    {cat.emergencyBufferNote && (
-                      <div className="p-2 rounded-xl bg-amber-50/80 dark:bg-amber-950/30 border border-amber-300 dark:border-amber-700/60 text-[10px] font-bold text-amber-900 dark:text-amber-200">
-                        💡 {cat.emergencyBufferNote}
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="font-extrabold text-slate-900 dark:text-white">
+                            {item.category}
+                          </span>
+                          <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-md bg-emerald-500/15 text-emerald-700 dark:text-emerald-300">
+                            Save ₹{item.saveTarget.toLocaleString('en-IN')}/mo
+                          </span>
+                        </div>
+                        <p className="text-[10px] font-mono text-slate-500 dark:text-slate-400">
+                          Spent: ₹{item.spentAmount.toLocaleString('en-IN')} • {item.patternObserved}
+                        </p>
+                        <p className="text-[11px] text-slate-700 dark:text-slate-200 font-medium leading-snug">
+                          → {item.actionTip}
+                        </p>
                       </div>
-                    )}
-
-                    <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 space-y-1">
-                      <span className="text-[9.5px] font-extrabold uppercase tracking-wider text-emerald-700 dark:text-emerald-400 block">
-                        Tailored Action Plan:
-                      </span>
-                      <ul className="space-y-1 text-[10.5px] text-slate-700 dark:text-slate-300 list-disc pl-3.5">
-                        {cat.actionableSuggestions.map((sug, i) => (
-                          <li key={i} className="leading-snug">
-                            {sug}
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
+                    ))}
                   </div>
                 </div>
-              ))}
-            </div>
-          </div>
+              )}
 
-          {/* Critical Problems & High-Leverage Solutions */}
-          <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <h3 className="text-xs font-bold uppercase tracking-wider text-slate-900 dark:text-white flex items-center gap-1.5">
-                <Zap className="w-3.5 h-3.5 text-amber-500" />
-                <span>Problematic Areas &amp; Actionable Solutions</span>
-              </h3>
-              <span className="text-[10px] text-slate-400">
-                Prioritized by financial &amp; clinical impact
-              </span>
-            </div>
-
-            {solverAnalysis.criticalProblems.length === 0 ? (
-              <div className="p-6 text-center rounded-2xl border border-dashed border-slate-300 dark:border-slate-800 space-y-1">
-                <CheckCircle2 className="w-6 h-6 text-emerald-500 mx-auto" />
-                <p className="text-xs font-bold text-slate-900 dark:text-white">
-                  All Systems Optimal! No High-Risk Debt or Budget Deficits
-                </p>
-                <p className="text-[11px] text-slate-500">
-                  Your loans are under control and routines are aligned.
-                </p>
-              </div>
-            ) : (
-              solverAnalysis.criticalProblems.map((prob) => (
+              {/* 2. HOW TO CLEAR LOANS */}
+              {(solverSectionFilter === 'all' || solverSectionFilter === 'loans') && (
                 <div
-                  key={prob.id}
-                  className={`p-4 rounded-2xl border transition-all shadow-xs space-y-3 ${
-                    prob.severity === 'critical'
-                      ? 'bg-rose-50/50 dark:bg-rose-950/20 border-rose-300 dark:border-rose-800'
-                      : isDark
-                      ? 'bg-slate-900 border-slate-800'
-                      : 'bg-white border-slate-200'
+                  className={`p-4 rounded-3xl border space-y-2.5 ${
+                    isDark ? 'bg-slate-900 border-rose-500/30' : 'bg-white border-rose-200 shadow-xs'
                   }`}
                 >
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <span
-                          className={`text-[9px] font-bold px-2 py-0.5 rounded-full uppercase ${
-                            prob.severity === 'critical'
-                              ? 'bg-rose-600 text-white'
-                              : 'bg-amber-500 text-white'
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-xs font-extrabold uppercase tracking-wider text-rose-600 dark:text-rose-400 flex items-center gap-1.5">
+                      <CreditCard className="w-4 h-4" />
+                      <span>2. How to Clear Loans (Step-by-Step Priority)</span>
+                    </h4>
+                    <button
+                      onClick={() => onNavigate('loans')}
+                      className="text-[10px] font-bold text-rose-600 dark:text-rose-400 hover:underline flex items-center gap-0.5 cursor-pointer"
+                    >
+                      <span>Loans</span>
+                      <ChevronRight className="w-3 h-3" />
+                    </button>
+                  </div>
+
+                  {aiSolverResult.loanClearance.length === 0 ? (
+                    <p className="text-xs text-emerald-600 dark:text-emerald-400 font-bold">
+                      Zero unpaid loans! Route all savings into your Investment Plan below.
+                    </p>
+                  ) : (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-xs">
+                      {aiSolverResult.loanClearance.map((loan) => (
+                        <div
+                          key={loan.priorityRank}
+                          className={`p-3 rounded-2xl border space-y-1 ${
+                            isDark ? 'bg-slate-800/70 border-slate-700' : 'bg-rose-50/40 border-rose-200/70'
                           }`}
                         >
-                          {prob.severity}
-                        </span>
-                        <h4 className="text-xs font-extrabold text-slate-900 dark:text-white">
-                          {prob.title}
-                        </h4>
-                      </div>
-                      <p className="text-[11px] text-slate-600 dark:text-slate-300 mt-1 font-medium">
-                        {prob.currentProblem}
-                      </p>
-                    </div>
-
-                    {prob.area === 'loans' && (
-                      <button
-                        onClick={() => onNavigate('loans')}
-                        className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 hover:underline flex items-center gap-0.5 cursor-pointer shrink-0"
-                      >
-                        <span>Open Loans</span>
-                        <ChevronRight className="w-3 h-3" />
-                      </button>
-                    )}
-                  </div>
-
-                  {/* The Suggested Solution Box */}
-                  <div className="p-3 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-300 dark:border-emerald-800/60 space-y-2">
-                    <div className="flex items-center gap-1.5 text-emerald-800 dark:text-emerald-300 font-bold text-xs">
-                      <Sparkles className="w-3.5 h-3.5 text-emerald-600" />
-                      <span>Recommended Solution: {prob.suggestedSolution}</span>
-                    </div>
-
-                    <ul className="space-y-1 text-[11px] text-slate-700 dark:text-slate-300 pl-4 list-disc">
-                      {prob.actionableSteps.map((step, idx) => (
-                        <li key={idx} className="leading-tight">
-                          {step}
-                        </li>
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="flex items-center gap-1.5 min-w-0">
+                              <span className="w-5 h-5 rounded-full bg-rose-600 text-white text-[10px] font-black flex items-center justify-center shrink-0">
+                                {loan.priorityRank}
+                              </span>
+                              <span className="font-extrabold text-slate-900 dark:text-white truncate">
+                                {loan.loanTitle}
+                              </span>
+                            </div>
+                            <span className="font-mono font-black text-rose-600 dark:text-rose-400 shrink-0">
+                              ₹{loan.remainingAmount.toLocaleString('en-IN')}
+                            </span>
+                          </div>
+                          <p className="text-[10px] font-mono text-indigo-600 dark:text-indigo-400 font-bold">
+                            {loan.lender} • {loan.payoffTimeline}
+                          </p>
+                          <p className="text-[11px] text-slate-700 dark:text-slate-200 font-medium leading-snug">
+                            → {loan.clearStrategy}
+                          </p>
+                        </div>
                       ))}
-                    </ul>
-
-                    <div className="pt-1 border-t border-emerald-200 dark:border-emerald-800/50 flex items-center justify-between text-[10px] text-emerald-900 dark:text-emerald-300 font-semibold">
-                      <span>✓ Potential Payoff Benefit:</span>
-                      <span className="font-mono font-bold text-emerald-700 dark:text-emerald-400">
-                        {prob.potentialBenefit}
-                      </span>
                     </div>
-                  </div>
+                  )}
                 </div>
-              ))
-            )}
-          </div>
+              )}
 
-          {/* Strategic Monetization & Wealth Growth Opportunities */}
-          <div className="space-y-3">
-            <h3 className="text-xs font-bold uppercase tracking-wider text-slate-900 dark:text-white flex items-center gap-1.5">
-              <TrendingUp className="w-3.5 h-3.5 text-emerald-500" />
-              <span>Money-Making &amp; Clinical Monetization Solutions</span>
-            </h3>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              {solverAnalysis.strategicOpportunities.map((opp, idx) => (
+              {/* 3. BEST INVESTMENT PLAN */}
+              {(solverSectionFilter === 'all' || solverSectionFilter === 'investments') && (
                 <div
-                  key={idx}
-                  className={`p-3.5 rounded-2xl border transition-all shadow-xs space-y-2 ${
-                    isDark ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'
+                  className={`p-4 rounded-3xl border space-y-2.5 ${
+                    isDark ? 'bg-slate-900 border-teal-500/30' : 'bg-white border-teal-200 shadow-xs'
                   }`}
                 >
-                  <div className="flex items-center gap-2">
-                    <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" />
-                    <h4 className="text-xs font-bold text-slate-900 dark:text-white">
-                      {opp.title}
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-xs font-extrabold uppercase tracking-wider text-teal-600 dark:text-teal-400 flex items-center gap-1.5">
+                      <TrendingUp className="w-4 h-4" />
+                      <span>3. Best Investment Plan (Based on Your Budget &amp; Loans)</span>
                     </h4>
+                    <button
+                      onClick={() => onNavigate('investments')}
+                      className="text-[10px] font-bold text-teal-600 dark:text-teal-400 hover:underline flex items-center gap-0.5 cursor-pointer"
+                    >
+                      <span>Investments</span>
+                      <ChevronRight className="w-3 h-3" />
+                    </button>
                   </div>
-                  <p className="text-[11px] text-slate-600 dark:text-slate-300 leading-relaxed">
-                    {opp.description}
-                  </p>
-                  <div className="p-2 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 text-[10px] font-mono text-emerald-700 dark:text-emerald-300">
-                    <strong>Action:</strong> {opp.actionPlan}
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-xs">
+                    {aiSolverResult.investmentPlan.map((inv, idx) => (
+                      <div
+                        key={idx}
+                        className={`p-3 rounded-2xl border space-y-1 ${
+                          isDark ? 'bg-slate-800/70 border-slate-700' : 'bg-teal-50/40 border-teal-200/70'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="font-extrabold text-slate-900 dark:text-white">
+                            {inv.instrumentName}
+                          </span>
+                          <span className="text-[10px] font-mono font-black px-2 py-0.5 rounded-md bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 shrink-0">
+                            {inv.returnRate}
+                          </span>
+                        </div>
+                        <p className="text-[10px] font-mono text-teal-700 dark:text-teal-400 font-bold">
+                          {inv.allocationPercent}% Share • ₹{inv.suggestedMonthlyRs.toLocaleString('en-IN')}/mo • {inv.riskTag}
+                        </p>
+                        <p className="text-[11px] text-slate-700 dark:text-slate-200 font-medium leading-snug">
+                          → {inv.shortReason}
+                        </p>
+                      </div>
+                    ))}
                   </div>
                 </div>
-              ))}
+              )}
             </div>
-          </div>
-
-          {/* Ask Custom LifeOS Question Box */}
-          <div
-            className={`p-4 rounded-2xl border transition-all shadow-xs space-y-3 ${
-              isDark ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'
-            }`}
-          >
-            <div className="flex items-center gap-2">
-              <Sparkles className="w-4 h-4 text-emerald-500" />
-              <h4 className="text-xs font-bold uppercase tracking-wider text-slate-900 dark:text-white">
-                Ask Ravi’s Assistant for Custom Solutions
-              </h4>
-            </div>
-            <p className="text-[11px] text-slate-500">
-              Need advice on a loan, budgeting, SIP rebalancing, BAMS exam focus, or clinic launch?
-            </p>
-
-            <form onSubmit={handleSolveCustomQuery} className="flex gap-2">
-              <input
-                type="text"
-                placeholder="e.g. If my loan EMI is ₹9,245, how can I earn extra ₹10,000/mo to close it early?"
-                value={customSolverQuery}
-                onChange={(e) => setCustomSolverQuery(e.target.value)}
-                className="flex-1 px-3 py-2 text-xs rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
-              />
-              <button
-                type="submit"
-                disabled={isSolvingCustom}
-                className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center gap-1.5 transition-all shadow-2xs cursor-pointer disabled:opacity-50 shrink-0"
-              >
-                {isSolvingCustom ? (
-                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                ) : (
-                  <Send className="w-3.5 h-3.5" />
-                )}
-                <span>Generate Plan</span>
-              </button>
-            </form>
-
-            {customSolverResult && (
-              <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 space-y-1.5 animate-in fade-in">
-                <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 uppercase tracking-wider flex items-center gap-1">
-                  <Bot className="w-3 h-3" /> Ravi’s Assistant Solution:
-                </span>
-                <p className="text-xs text-slate-800 dark:text-slate-200 whitespace-pre-line leading-relaxed font-sans">
-                  {customSolverResult}
-                </p>
-              </div>
-            )}
-          </div>
+          )}
         </div>
       )}
 

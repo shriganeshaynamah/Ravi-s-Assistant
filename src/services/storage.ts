@@ -750,43 +750,9 @@ export const defaultExpensesList: ExpenseRecord[] = [
   },
 ];
 
-// Apply one-time seed synchronization for the user's provided JSON snapshot so existing browser/APK storage reflects it immediately
+// Keep seed version key for backwards compatibility without overwriting existing saved user edits
 const USER_JSON_SEED_VERSION_KEY = 'ayurlife_user_json_seed_v2026_10_05_r2';
-let didApplyFreshUserJsonSeed = false;
-try {
-  if (typeof localStorage !== 'undefined' && !localStorage.getItem(USER_JSON_SEED_VERSION_KEY)) {
-    const seedSnapshot = {
-      milestones: defaultMilestones,
-      loans: defaultLoans,
-      investments: defaultInvestments,
-      expenses: defaultExpensesList,
-      notes: defaultKeepNotes,
-      tasks: defaultTasksList,
-      events: defaultEventsList,
-      notifications: defaultNotifications,
-      dinacharyaLogs: defaultDinacharyaLogs,
-      habits: defaultHabits,
-      journalEntries: defaultJournalEntries,
-      _seedVersion: USER_JSON_SEED_VERSION_KEY,
-      _savedAtTimestamp: Date.now() + 10000,
-    };
-    localStorage.setItem(STORAGE_KEYS.MILESTONES, JSON.stringify(defaultMilestones));
-    localStorage.setItem(STORAGE_KEYS.LOANS, JSON.stringify(defaultLoans));
-    localStorage.setItem(STORAGE_KEYS.INVESTMENTS, JSON.stringify(defaultInvestments));
-    localStorage.setItem(STORAGE_KEYS.EXPENSES, JSON.stringify(defaultExpensesList));
-    localStorage.setItem(STORAGE_KEYS.EXPENSES_HISTORY, JSON.stringify(defaultExpensesList));
-    localStorage.setItem(STORAGE_KEYS.NOTES, JSON.stringify(defaultKeepNotes));
-    localStorage.setItem(STORAGE_KEYS.CHECKLISTS, JSON.stringify(defaultTasksList));
-    localStorage.setItem(STORAGE_KEYS.EVENTS, JSON.stringify(defaultEventsList));
-    localStorage.setItem(STORAGE_KEYS.NOTIFICATIONS, JSON.stringify(defaultNotifications));
-    localStorage.setItem(STORAGE_KEYS.DINACHARYA, JSON.stringify(defaultDinacharyaLogs));
-    localStorage.setItem(STORAGE_KEYS.HABITS, JSON.stringify(defaultHabits));
-    localStorage.setItem(STORAGE_KEYS.JOURNAL, JSON.stringify(defaultJournalEntries));
-    localStorage.setItem('ayurlife_cloud_full_snapshot', JSON.stringify(seedSnapshot));
-    localStorage.setItem(USER_JSON_SEED_VERSION_KEY, 'applied');
-    didApplyFreshUserJsonSeed = true;
-  }
-} catch {}
+const didApplyFreshUserJsonSeed = false;
 
 // Request permanent storage permission from browser / Android WebView so data is never evicted
 try {
@@ -940,20 +906,13 @@ export const autoSaveToCloud = (allData: Record<string, any>): void => {
  */
 export const syncExpensesToMonthlyArchive = (currentExpenses: ExpenseRecord[]): ExpenseRecord[] => {
   try {
-    const rawArchive = localStorage.getItem(STORAGE_KEYS.EXPENSES_HISTORY);
-    const archivedList: ExpenseRecord[] = rawArchive ? JSON.parse(rawArchive) : [];
-    const byId = new Map<string, ExpenseRecord>();
-    archivedList.forEach((item) => {
-      if (item && item.id) byId.set(item.id, item);
-    });
-    currentExpenses.forEach((item) => {
-      if (item && item.id) byId.set(item.id, item);
-    });
-    const merged = Array.from(byId.values()).sort((a, b) => b.date.localeCompare(a.date));
-    const serialized = JSON.stringify(merged);
+    const sorted = [...(currentExpenses || [])].sort((a, b) =>
+      (b.date || '').localeCompare(a.date || '')
+    );
+    const serialized = JSON.stringify(sorted);
     localStorage.setItem(STORAGE_KEYS.EXPENSES_HISTORY, serialized);
     writeToIDB(STORAGE_KEYS.EXPENSES_HISTORY, serialized);
-    return merged;
+    return sorted;
   } catch {
     return currentExpenses;
   }
@@ -981,16 +940,7 @@ export const clearAllMonthlyArchivedExpenses = (): void => {
 export const getAllArchivedAndCurrentExpenses = (currentExpenses?: ExpenseRecord[]): ExpenseRecord[] => {
   try {
     const active = currentExpenses ?? getStoredData<ExpenseRecord[]>(STORAGE_KEYS.EXPENSES, defaultExpensesList);
-    const rawArchive = localStorage.getItem(STORAGE_KEYS.EXPENSES_HISTORY);
-    const archived: ExpenseRecord[] = rawArchive ? JSON.parse(rawArchive) : [];
-    const byId = new Map<string, ExpenseRecord>();
-    archived.forEach((item) => {
-      if (item && item.id) byId.set(item.id, item);
-    });
-    active.forEach((item) => {
-      if (item && item.id) byId.set(item.id, item);
-    });
-    return Array.from(byId.values()).sort((a, b) => b.date.localeCompare(a.date));
+    return [...(active || [])].sort((a, b) => (b.date || '').localeCompare(a.date || ''));
   } catch {
     return currentExpenses || [];
   }
@@ -1024,16 +974,6 @@ export const hydrateFromPersistentDB = async (
     const idbSnap = JSON.parse(idbSnapRaw);
     if (!idbSnap || typeof idbSnap !== 'object') {
       isIDBHydrationFinished = true;
-      return;
-    }
-
-    // Do not overwrite if IndexedDB snapshot is from an older seed version
-    if (idbSnap._seedVersion !== USER_JSON_SEED_VERSION_KEY) {
-      isIDBHydrationFinished = true;
-      const currentLs = localStorage.getItem('ayurlife_cloud_full_snapshot');
-      if (currentLs) {
-        writeToIDB('ayurlife_cloud_full_snapshot', currentLs);
-      }
       return;
     }
 

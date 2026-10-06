@@ -1,0 +1,95 @@
+{
+  "entities": {
+    "LifeOsWorkspace": {
+      "title": "LifeOsWorkspace",
+      "description": "Master cross-device synchronized state for Dr. Ravi Shankar LifeOS & Medical HQ.",
+      "type": "object",
+      "properties": {
+        "ownerEmail": {
+          "type": "string",
+          "description": "Permanent owner email address",
+          "maxLength": 128,
+          "pattern": "^rk867000@gmail\\.com$"
+        },
+        "updatedAtMs": {
+          "type": "number",
+          "description": "Client mutation epoch timestamp in milliseconds"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of the update"
+        },
+        "milestones": {
+          "type": "array",
+          "description": "Academic and clinical roadmap milestones"
+        },
+        "loans": {
+          "type": "array",
+          "description": "Active and paid loans with EMI repayment history"
+        },
+        "investments": {
+          "type": "array",
+          "description": "Investments and SIP records"
+        },
+        "expenses": {
+          "type": "array",
+          "description": "Current and historical expense/income ledger"
+        },
+        "expensesArchive": {
+          "type": "array",
+          "description": "Archived monthly expenses across all months"
+        },
+        "notes": {
+          "type": "array",
+          "description": "Sticky notes and clinical notes"
+        },
+        "tasks": {
+          "type": "array",
+          "description": "Keep To-Do daily tasks and checklists"
+        },
+        "events": {
+          "type": "array",
+          "description": "Calendar and clinical schedule events"
+        },
+        "notifications": {
+          "type": "array",
+          "description": "In-app notification feed"
+        },
+        "dinacharyaLogs": {
+          "type": "array",
+          "description": "Daily Ayurvedic Dinacharya routine logs"
+        },
+        "habits": {
+          "type": "array",
+          "description": "Daily habit tracker items and streaks"
+        },
+        "journalEntries": {
+          "type": "array",
+          "description": "Personal journal and reflection entries"
+        }
+      },
+      "required": [
+        "ownerEmail",
+        "updatedAtMs",
+        "milestones",
+        "loans",
+        "investments",
+        "expenses",
+        "notes",
+        "tasks",
+        "events",
+        "notifications",
+        "dinacharyaLogs",
+        "habits",
+        "journalEntries"
+      ]
+    }
+  },
+  "firestore": {
+    "/workspaces/{workspaceId}": {
+      "schema": { "$ref": "#/entities/LifeOsWorkspace" },
+      "description": "Stores the cross-device synchronized LifeOS state for Dr. Ravi Shankar"
+    }
+  }
+}

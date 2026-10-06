@@ -67,7 +67,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       id: 'expenses' as ActiveTab,
       label: 'Expense & Wealth Ledger',
       icon: DollarSign,
-      badge: 'Sheets',
+      badge: 'Cloud',
       badgeColor: 'bg-emerald-500/20 text-emerald-400 font-mono',
     },
     {

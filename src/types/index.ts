@@ -100,7 +100,16 @@ export interface InvestmentItem {
   id: string;
   title: string; // e.g. "Nifty 50 Index Fund Direct Growth"
   platform: string; // e.g. "Groww", "Zerodha Coin", "SBI Securities"
-  category: 'stock' | 'mutual_fund' | 'gold_sgb' | 'fixed_deposit' | 'real_estate' | 'other';
+  category:
+    | 'stable_money_fd'
+    | 'fixed_deposit'
+    | 'recurring_deposit'
+    | 'mutual_fund'
+    | 'bonds'
+    | 'gold_sgb'
+    | 'stock'
+    | 'real_estate'
+    | 'other';
   investedAmount: number;
   currentValue: number;
   expectedReturnRate: number; // % annual

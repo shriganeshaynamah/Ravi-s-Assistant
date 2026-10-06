@@ -1,0 +1,85 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global default-deny safety net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidLifeOsWorkspace(data) {
+      return data.keys().hasAll([
+          'ownerEmail',
+          'updatedAtMs',
+          'milestones',
+          'loans',
+          'investments',
+          'expenses',
+          'notes',
+          'tasks',
+          'events',
+          'notifications',
+          'dinacharyaLogs',
+          'habits',
+          'journalEntries'
+        ])
+        && data.keys().hasOnly([
+          'ownerEmail',
+          'updatedAtMs',
+          'updatedAt',
+          'milestones',
+          'loans',
+          'investments',
+          'expenses',
+          'expensesArchive',
+          'notes',
+          'tasks',
+          'events',
+          'notifications',
+          'dinacharyaLogs',
+          'habits',
+          'journalEntries'
+        ])
+        && data.ownerEmail is string
+        && data.ownerEmail.size() <= 128
+        && data.ownerEmail == 'rk867000@gmail.com'
+        && (data.updatedAtMs is int || data.updatedAtMs is float)
+        && data.milestones is list && data.milestones.size() <= 100
+        && data.loans is list && data.loans.size() <= 200
+        && data.investments is list && data.investments.size() <= 200
+        && data.expenses is list && data.expenses.size() <= 500
+        && (!('expensesArchive' in data) || (data.expensesArchive is list && data.expensesArchive.size() <= 500))
+        && data.notes is list && data.notes.size() <= 300
+        && data.tasks is list && data.tasks.size() <= 300
+        && data.events is list && data.events.size() <= 300
+        && data.notifications is list && data.notifications.size() <= 200
+        && data.dinacharyaLogs is list && data.dinacharyaLogs.size() <= 400
+        && data.habits is list && data.habits.size() <= 100
+        && data.journalEntries is list && data.journalEntries.size() <= 300;
+    }
+
+    match /workspaces/{workspaceId} {
+      allow get: if isValidId(workspaceId) && workspaceId == 'ravi_shankar_hq';
+      allow list: if false;
+      allow create: if isValidId(workspaceId)
+        && workspaceId == 'ravi_shankar_hq'
+        && isValidLifeOsWorkspace(incoming());
+      allow update: if isValidId(workspaceId)
+        && workspaceId == 'ravi_shankar_hq'
+        && isValidLifeOsWorkspace(incoming())
+        && incoming().ownerEmail == existing().ownerEmail;
+      allow delete: if false;
+    }
+  }
+}

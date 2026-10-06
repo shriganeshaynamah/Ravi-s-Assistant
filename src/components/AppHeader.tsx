@@ -6,6 +6,7 @@ import { PWAInstallButton } from './PWAInstallButton';
 interface AppHeaderProps {
   onOpenDrawer: () => void;
   onOpenNotifications: () => void;
+  onOpenCloudSync?: () => void;
   unreadNotificationsCount: number;
   user: User | null;
   isDark: boolean;
@@ -66,6 +67,7 @@ export const WEBSITE_THEMES: WebsiteTheme[] = [
 export const AppHeader: React.FC<AppHeaderProps> = ({
   onOpenDrawer,
   onOpenNotifications,
+  onOpenCloudSync,
   unreadNotificationsCount,
   user,
   isDark,
@@ -143,10 +145,21 @@ export const AppHeader: React.FC<AppHeaderProps> = ({
               <p className="text-[10px] text-slate-300 font-medium leading-tight">
                 Personal Assistant
               </p>
-              <span className="inline-flex items-center gap-0.5 text-[8.5px] font-semibold text-emerald-300 bg-emerald-950/60 px-1.5 py-0.2 rounded-full border border-emerald-500/30">
+              <button
+                type="button"
+                onClick={onOpenCloudSync}
+                className="inline-flex items-center gap-0.5 text-[8.5px] font-semibold text-emerald-300 bg-emerald-950/60 hover:bg-emerald-900/70 px-1.5 py-0.2 rounded-full border border-emerald-500/30 cursor-pointer transition-colors"
+                title={user?.email ? `Connected (${user.email}) • Cloud Sync` : 'Click to Connect Gmail'}
+              >
                 <Cloud className="w-2.5 h-2.5 text-emerald-400" />
-                <span>{syncStatus === 'saving' ? 'Saving...' : 'Cloud Synced'}</span>
-              </span>
+                <span>
+                  {syncStatus === 'saving'
+                    ? 'Saving...'
+                    : user?.email
+                    ? 'Cloud Sync ✓'
+                    : 'Connect Gmail'}
+                </span>
+              </button>
             </div>
           </div>
         </div>

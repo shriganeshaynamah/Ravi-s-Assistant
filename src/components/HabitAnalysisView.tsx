@@ -28,13 +28,9 @@ import {
   Droplets,
   Heart,
   ShieldCheck,
-  FileSpreadsheet,
-  Download,
   Flame,
-  ArrowUpRight,
   Filter,
 } from 'lucide-react';
-import { exportMultiSectionToGoogleSheets } from '../services/googleSheets';
 
 interface HabitAnalysisViewProps {
   dinacharyaLogs: DinacharyaLog[];
@@ -44,12 +40,9 @@ interface HabitAnalysisViewProps {
 
 export const HabitAnalysisView: React.FC<HabitAnalysisViewProps> = ({
   dinacharyaLogs,
-  habits,
   isDark = true,
 }) => {
   const [timeframe, setTimeframe] = useState<'30' | '14' | '7'>('30');
-  const [isExporting, setIsExporting] = useState(false);
-  const [exportSuccessUrl, setExportSuccessUrl] = useState<string | null>(null);
 
   // Generate complete 30-day timeline ending today
   const full30DayTimeline = useMemo(() => {
@@ -230,22 +223,6 @@ export const HabitAnalysisView: React.FC<HabitAnalysisViewProps> = ({
     };
   }, [filteredTimeline]);
 
-  const handleExportToSheets = async () => {
-    setIsExporting(true);
-    setExportSuccessUrl(null);
-    try {
-      const res = await exportMultiSectionToGoogleSheets({
-        habits,
-        dinacharyaLogs,
-      });
-      setExportSuccessUrl(res.spreadsheetUrl);
-    } catch (err: any) {
-      alert(`Sync Error: ${err.message || 'Check Google Workspace login'}`);
-    } finally {
-      setIsExporting(false);
-    }
-  };
-
   return (
     <div className="space-y-4 animate-in fade-in duration-200">
       {/* Top Banner & Control Bar */}
@@ -298,34 +275,8 @@ export const HabitAnalysisView: React.FC<HabitAnalysisViewProps> = ({
               30 Days
             </button>
           </div>
-
-          {/* Export to Google Sheet button */}
-          <button
-            onClick={handleExportToSheets}
-            disabled={isExporting}
-            className="py-1 px-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-bold flex items-center gap-1 shadow-2xs transition-all cursor-pointer disabled:opacity-50"
-            title="Save 30-day habits and logs to Google Sheet"
-          >
-            <FileSpreadsheet className="w-3.5 h-3.5" />
-            <span>{isExporting ? 'Syncing...' : 'Export to Sheet'}</span>
-          </button>
         </div>
       </div>
-
-      {exportSuccessUrl && (
-        <div className="p-2.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-300 dark:border-emerald-700 flex items-center justify-between text-xs text-emerald-800 dark:text-emerald-200">
-          <span>✓ Synchronized with your Master Google Sheet!</span>
-          <a
-            href={exportSuccessUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="font-bold underline flex items-center gap-1"
-          >
-            <span>Open Sheet</span>
-            <ArrowUpRight className="w-3 h-3" />
-          </a>
-        </div>
-      )}
 
       {/* KPI Highlights Cards */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
