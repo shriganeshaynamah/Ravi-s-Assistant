@@ -32,8 +32,11 @@ export const KeepNotesView: React.FC<KeepNotesViewProps> = ({
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  const [viewingNoteId, setViewingNoteId] = useState<string | null>(null);
   const [editingNote, setEditingNote] = useState<NoteItem | null>(null);
   const [noteToDelete, setNoteToDelete] = useState<NoteItem | null>(null);
+
+  const viewingNote = notes.find((n) => n.id === viewingNoteId) || null;
 
   // Form state (shared by Add and Edit modals)
   const [newTitle, setNewTitle] = useState('');
@@ -147,7 +150,7 @@ export const KeepNotesView: React.FC<KeepNotesViewProps> = ({
             Notes &amp; Tasks
           </h2>
           <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
-            Click any note card to edit • Tick-out checklists &amp; colored notes
+            Click any note card to view full note • Use Edit icon to edit
           </p>
         </div>
 
@@ -197,7 +200,7 @@ export const KeepNotesView: React.FC<KeepNotesViewProps> = ({
           <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block px-1">
             Pinned
           </span>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className="grid grid-cols-2 gap-2.5 sm:gap-3">
             {pinnedNotes.map((note) => renderNoteCard(note))}
           </div>
         </div>
@@ -210,7 +213,7 @@ export const KeepNotesView: React.FC<KeepNotesViewProps> = ({
             Others
           </span>
         )}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <div className="grid grid-cols-2 gap-2.5 sm:gap-3">
           {otherNotes.map((note) => renderNoteCard(note))}
         </div>
       </div>
@@ -334,7 +337,154 @@ export const KeepNotesView: React.FC<KeepNotesViewProps> = ({
         </div>
       )}
 
-      {/* Modal: Edit Note (Opens when clicking any note card) */}
+      {/* Modal: View Full Note (Opens when clicking any note card) */}
+      {viewingNote && (
+        <div
+          onClick={() => setViewingNoteId(null)}
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              backgroundColor: isDark ? undefined : viewingNote.color || '#ffffff',
+            }}
+            className={`w-full max-w-md rounded-3xl p-5 shadow-2xl border space-y-3.5 max-h-[82vh] flex flex-col ${
+              isDark
+                ? 'bg-slate-900 border-slate-700 text-slate-100'
+                : 'bg-white border-slate-200 text-slate-900'
+            }`}
+          >
+            {/* Header */}
+            <div className="flex items-start justify-between gap-2 pb-2.5 border-b border-slate-200/80 dark:border-slate-800 shrink-0">
+              <div className="min-w-0">
+                <h3 className="text-sm font-black tracking-tight leading-snug break-words">
+                  {viewingNote.title}
+                </h3>
+                <p className="text-[10px] opacity-60 font-mono mt-0.5">
+                  {new Date(viewingNote.updatedAt || viewingNote.createdAt).toLocaleString()}
+                </p>
+              </div>
+
+              <div className="flex items-center gap-1 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const target = viewingNote;
+                    setViewingNoteId(null);
+                    openEditNoteModal(target);
+                  }}
+                  className="p-1.5 rounded-lg text-slate-500 hover:text-purple-600 dark:hover:text-purple-400 cursor-pointer"
+                  title="Edit Note"
+                >
+                  <Edit2 className="w-4 h-4" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    onUpdateNote({ ...viewingNote, isPinned: !viewingNote.isPinned })
+                  }
+                  className={`p-1.5 rounded-lg cursor-pointer ${
+                    viewingNote.isPinned
+                      ? 'text-amber-500'
+                      : 'text-slate-400 hover:text-slate-600'
+                  }`}
+                  title={viewingNote.isPinned ? 'Unpin Note' : 'Pin Note'}
+                >
+                  <Pin className={`w-4 h-4 ${viewingNote.isPinned ? 'fill-amber-500' : ''}`} />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const target = viewingNote;
+                    setViewingNoteId(null);
+                    setNoteToDelete(target);
+                  }}
+                  className="p-1.5 rounded-lg text-slate-400 hover:text-rose-500 cursor-pointer"
+                  title="Delete Note"
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setViewingNoteId(null)}
+                  className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
+                  title="Close"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+
+            {/* Scrollable Full Note Body */}
+            <div className="overflow-y-auto space-y-3 pr-1 flex-1">
+              {viewingNote.content ? (
+                <p className="text-xs leading-relaxed whitespace-pre-wrap break-words">
+                  {viewingNote.content}
+                </p>
+              ) : (
+                !viewingNote.checklist?.length && (
+                  <p className="text-xs italic opacity-50">No additional text in this note.</p>
+                )
+              )}
+
+              {/* Full Checklist Items */}
+              {viewingNote.checklist && viewingNote.checklist.length > 0 && (
+                <div className="space-y-1.5 pt-1">
+                  <span className="text-[10px] font-bold uppercase tracking-wider opacity-60 block">
+                    Checklist ({viewingNote.checklist.filter((c) => c.done).length}/
+                    {viewingNote.checklist.length})
+                  </span>
+                  {viewingNote.checklist.map((item) => (
+                    <div
+                      key={item.id}
+                      onClick={() => handleToggleChecklist(viewingNote.id, item.id)}
+                      className="flex items-start gap-2 text-xs p-2 rounded-xl bg-black/5 dark:bg-white/5 cursor-pointer hover:opacity-85"
+                    >
+                      {item.done ? (
+                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />
+                      ) : (
+                        <Circle className="w-3.5 h-3.5 text-slate-400 shrink-0 mt-0.5" />
+                      )}
+                      <span
+                        className={`leading-snug break-words ${
+                          item.done ? 'line-through opacity-50' : 'font-medium'
+                        }`}
+                      >
+                        {item.text}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-200/80 dark:border-slate-800 shrink-0">
+              <button
+                type="button"
+                onClick={() => {
+                  const target = viewingNote;
+                  setViewingNoteId(null);
+                  openEditNoteModal(target);
+                }}
+                className="px-3 py-1.5 rounded-xl border border-purple-300 dark:border-purple-700 text-purple-700 dark:text-purple-300 text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+              >
+                <Edit2 className="w-3.5 h-3.5" />
+                <span>Edit</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setViewingNoteId(null)}
+                className="px-4 py-1.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-bold cursor-pointer"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Edit Note (Opens when clicking Edit button) */}
       {editingNote && (
         <div
           onClick={() => setEditingNote(null)}
@@ -387,9 +537,9 @@ export const KeepNotesView: React.FC<KeepNotesViewProps> = ({
               </div>
 
               <div>
-                <label className="text-[10px] font-bold text-slate-400 block mb-1">Note Content</label>
+                <label className="text-[10px] font-bold text-slate-400 block mb-1">Full Note Text</label>
                 <textarea
-                  rows={4}
+                  rows={7}
                   placeholder="Write or update your note..."
                   value={newContent}
                   onChange={(e) => setNewContent(e.target.value)}
@@ -546,24 +696,26 @@ export const KeepNotesView: React.FC<KeepNotesViewProps> = ({
 
   function renderNoteCard(note: NoteItem) {
     const cardBg = isDark ? 'bg-slate-800/90 text-slate-100' : 'bg-white text-slate-800';
+    const previewChecklist = note.checklist ? note.checklist.slice(0, 3) : [];
+    const remainingChecklistCount = note.checklist ? Math.max(0, note.checklist.length - 3) : 0;
 
     return (
       <div
         key={note.id}
-        onClick={() => openEditNoteModal(note)}
+        onClick={() => setViewingNoteId(note.id)}
         style={{
           backgroundColor: isDark ? undefined : note.color || '#fff',
         }}
-        className={`p-4 rounded-3xl border border-slate-200/80 dark:border-slate-700/80 hover:border-purple-400 dark:hover:border-purple-500/60 shadow-xs hover:shadow-md space-y-2.5 transition-all flex flex-col justify-between cursor-pointer group ${
+        className={`p-3.5 rounded-3xl border border-slate-200/80 dark:border-slate-700/80 hover:border-purple-400 dark:hover:border-purple-500/60 shadow-xs hover:shadow-md space-y-2 transition-all flex flex-col justify-between cursor-pointer group ${
           isDark ? cardBg : ''
         }`}
       >
         <div className="space-y-1.5">
-          <div className="flex items-start justify-between gap-2">
-            <h4 className="text-xs font-black tracking-tight leading-tight group-hover:text-purple-600 dark:group-hover:text-purple-400 transition-colors">
+          <div className="flex items-start justify-between gap-1.5">
+            <h4 className="text-xs font-black tracking-tight leading-tight line-clamp-2 group-hover:text-purple-600 dark:group-hover:text-purple-400 transition-colors">
               {note.title}
             </h4>
-            <div className="flex items-center gap-1 shrink-0">
+            <div className="flex items-center gap-0.5 shrink-0">
               <button
                 type="button"
                 onClick={(e) => {
@@ -573,7 +725,7 @@ export const KeepNotesView: React.FC<KeepNotesViewProps> = ({
                 className="p-1 text-slate-400 hover:text-purple-600 dark:hover:text-purple-400 cursor-pointer"
                 title="Edit note"
               >
-                <Edit2 className="w-3.5 h-3.5" />
+                <Edit2 className="w-3 h-3" />
               </button>
               <button
                 type="button"
@@ -586,7 +738,7 @@ export const KeepNotesView: React.FC<KeepNotesViewProps> = ({
                 }`}
                 title={note.isPinned ? 'Unpin' : 'Pin'}
               >
-                <Pin className={`w-3.5 h-3.5 ${note.isPinned ? 'fill-amber-500' : ''}`} />
+                <Pin className={`w-3 h-3 ${note.isPinned ? 'fill-amber-500' : ''}`} />
               </button>
               <button
                 type="button"
@@ -597,46 +749,50 @@ export const KeepNotesView: React.FC<KeepNotesViewProps> = ({
                 className="p-1 text-slate-400 hover:text-rose-500 cursor-pointer"
                 title="Delete"
               >
-                <Trash2 className="w-3.5 h-3.5" />
+                <Trash2 className="w-3 h-3" />
               </button>
             </div>
           </div>
 
           {note.content && (
-            <p className="text-[11px] leading-relaxed whitespace-pre-line opacity-90">
+            <p className="text-[11px] leading-relaxed whitespace-pre-line opacity-90 line-clamp-3">
               {note.content}
             </p>
           )}
 
-          {/* Tick-out Checklist Items inside Keep note */}
-          {note.checklist && note.checklist.length > 0 && (
-            <div className="space-y-1 pt-1">
-              {note.checklist.map((item) => (
+          {/* Tick-out Checklist Items Preview inside Keep note (max 3 shown on card) */}
+          {previewChecklist.length > 0 && (
+            <div className="space-y-1 pt-0.5">
+              {previewChecklist.map((item) => (
                 <div
                   key={item.id}
                   onClick={(e) => {
                     e.stopPropagation();
                     handleToggleChecklist(note.id, item.id);
                   }}
-                  className="flex items-center gap-2 text-[11px] cursor-pointer hover:opacity-80"
+                  className="flex items-center gap-1.5 text-[10.5px] cursor-pointer hover:opacity-80"
                 >
                   {item.done ? (
-                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                    <CheckCircle2 className="w-3 h-3 text-emerald-600 dark:text-emerald-400 shrink-0" />
                   ) : (
-                    <Circle className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                    <Circle className="w-3 h-3 text-slate-400 shrink-0" />
                   )}
-                  <span className={item.done ? 'line-through opacity-50' : 'font-medium'}>
+                  <span className={`truncate ${item.done ? 'line-through opacity-50' : 'font-medium'}`}>
                     {item.text}
                   </span>
                 </div>
               ))}
+              {remainingChecklistCount > 0 && (
+                <p className="text-[9.5px] font-bold text-purple-600 dark:text-purple-400 pt-0.5">
+                  +{remainingChecklistCount} more item{remainingChecklistCount > 1 ? 's' : ''}…
+                </p>
+              )}
             </div>
           )}
         </div>
 
-        <div className="pt-2 flex items-center justify-between text-[9px] opacity-60 font-mono">
+        <div className="pt-1.5 flex items-center justify-between text-[9px] opacity-60 font-mono">
           <span>{new Date(note.updatedAt || note.createdAt).toLocaleDateString()}</span>
-          <span>Tap to Edit</span>
         </div>
       </div>
     );

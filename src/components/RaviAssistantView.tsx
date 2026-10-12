@@ -52,6 +52,8 @@ import {
   getInstantClinicalAnalysis,
   analyzeLifeOSData,
   getInvestigationReferenceDetails,
+  searchShlokasWithAI,
+  type AIShlokaSearchResult,
   type InvestigationReferenceGuide,
   type MedicalAnalysisResult,
   type MedicalCaseQuery,
@@ -448,6 +450,11 @@ export const RaviAssistantView: React.FC<RaviAssistantViewProps> = ({
   const [selectedAcharya, setSelectedAcharya] = useState<string>('charaka');
   const [activeShlokaIndex, setActiveShlokaIndex] = useState<number>(0);
   const [showAllChikitsaShlokas, setShowAllChikitsaShlokas] = useState<boolean>(false);
+  const [aiShlokaQuery, setAiShlokaQuery] = useState<string>(
+    savedMedicsDraft.diseaseInput || 'Amavata (Rheumatoid Arthritis)'
+  );
+  const [isSearchingShlokaAI, setIsSearchingShlokaAI] = useState<boolean>(false);
+  const [isShlokaAISourced, setIsShlokaAISourced] = useState<boolean>(false);
   const [confirmedMedicines, setConfirmedMedicines] = useState<Record<string, boolean>>({});
   const [confirmedShodhana, setConfirmedShodhana] = useState<Record<string, boolean>>({});
   const [confirmedInvestigations, setConfirmedInvestigations] = useState<Record<string, boolean>>({});
@@ -461,12 +468,111 @@ export const RaviAssistantView: React.FC<RaviAssistantViewProps> = ({
   const [showPrescriptionPad, setShowPrescriptionPad] = useState(false);
   const [isDDxModalOpen, setIsDDxModalOpen] = useState(false);
 
+  const applyAIShlokaToMedicsResult = (
+    aiShloka: AIShlokaSearchResult,
+    targetAcharyaKey: string
+  ) => {
+    setIsShlokaAISourced(Boolean(aiShloka.isLiveAI));
+    setActiveShlokaIndex(0);
+    setMedicsResult((prev) => {
+      if (!prev) return prev;
+      const acharyaNames: Record<string, string> = {
+        charaka: 'Acharya Charaka (Charaka Samhita)',
+        sushruta: 'Acharya Sushruta (Sushruta Samhita)',
+        vagbhata: 'Acharya Vagbhata (Ashtanga Hridaya)',
+        chakradatta: 'Acharya Chakrapani Datta (Chakradatta)',
+        sharangadhara: 'Acharya Sharangadhara (Sharangadhara Samhita)',
+      };
+      const existingProtocols = prev.ayurvedicAnalysis.acharyaProtocols || {};
+      const currentProto = existingProtocols[targetAcharyaKey];
+
+      const updatedProto = {
+        acharyaId: targetAcharyaKey,
+        acharyaName:
+          currentProto?.acharyaName ||
+          acharyaNames[targetAcharyaKey] ||
+          aiShloka.acharyaAuthority ||
+          'Classical Samhita',
+        sourceTextbook:
+          aiShloka.diseaseShloka.sourceBook ||
+          currentProto?.sourceTextbook ||
+          'Classical Samhita',
+        isDirectlyMentioned: true,
+        mentionStatusNote:
+          currentProto?.mentionStatusNote ||
+          `AI-searched classical verse from ${aiShloka.diseaseShloka.sourceBook} (${aiShloka.diseaseShloka.chapterAndVerse}).`,
+        clinicalPhilosophy:
+          currentProto?.clinicalPhilosophy ||
+          aiShloka.diseaseShloka.meaning,
+        diseaseReference: `${aiShloka.diseaseShloka.sourceBook} (${aiShloka.diseaseShloka.chapterAndVerse})`,
+        shlokaReference: aiShloka.diseaseShloka,
+        chikitsaSutra: aiShloka.chikitsaSutra || prev.ayurvedicAnalysis.chikitsaSutra,
+        chikitsaSutraReference:
+          aiShloka.chikitsaSutraReference ||
+          `${aiShloka.diseaseShloka.sourceBook} (${aiShloka.diseaseShloka.chapterAndVerse})`,
+        chikitsaShlokas:
+          aiShloka.chikitsaShlokas && aiShloka.chikitsaShlokas.length > 0
+            ? aiShloka.chikitsaShlokas
+            : currentProto?.chikitsaShlokas || [],
+        shamanaChikitsa: currentProto?.shamanaChikitsa || prev.ayurvedicAnalysis.shamanaChikitsa,
+        shodhanaChikitsa: currentProto?.shodhanaChikitsa || prev.ayurvedicAnalysis.shodhanaChikitsa,
+        paraSurgicalTherapy: currentProto?.paraSurgicalTherapy || prev.ayurvedicAnalysis.paraSurgicalTherapy,
+      };
+
+      return {
+        ...prev,
+        ayurvedicAnalysis: {
+          ...prev.ayurvedicAnalysis,
+          shlokaReference: aiShloka.diseaseShloka,
+          chikitsaSutra: aiShloka.chikitsaSutra || prev.ayurvedicAnalysis.chikitsaSutra,
+          chikitsaShlokas:
+            aiShloka.chikitsaShlokas && aiShloka.chikitsaShlokas.length > 0
+              ? aiShloka.chikitsaShlokas
+              : prev.ayurvedicAnalysis.chikitsaShlokas,
+          acharyaProtocols: {
+            ...existingProtocols,
+            [targetAcharyaKey]: updatedProto,
+          },
+        },
+      };
+    });
+  };
+
+  const handleSearchShlokaWithAI = async (customQuery?: string, customAcharya?: string) => {
+    const queryToUse =
+      (customQuery !== undefined ? customQuery : aiShlokaQuery).trim() ||
+      diseaseInput.trim() ||
+      symptomsInput.trim() ||
+      medicsResult?.ayurvedicAnalysis.vyadhiVinischaya ||
+      'Amavata';
+    const acharyaToUse = customAcharya || selectedAcharya || 'charaka';
+
+    setAiShlokaQuery(queryToUse);
+    setIsSearchingShlokaAI(true);
+    try {
+      const aiRes = await searchShlokasWithAI(queryToUse, acharyaToUse);
+      applyAIShlokaToMedicsResult(aiRes, acharyaToUse);
+    } catch (err) {
+      console.warn('AI Shloka search error:', err);
+    } finally {
+      setIsSearchingShlokaAI(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === 'medics' && !isShlokaAISourced && !isSearchingShlokaAI) {
+      void handleSearchShlokaWithAI();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab]);
+
   const handleSelectPreset = (presetId: string) => {
     setSelectedPresetId(presetId);
     if (!presetId) return;
     const p = CLINICAL_DISEASE_PRESETS.find((d) => d.id === presetId);
     if (p) {
       setDiseaseInput(p.name);
+      setAiShlokaQuery(p.name);
       // As requested: clear other boxes and let doctor enter whatever details they want to provide; symptoms optional
       setSymptomsInput('');
       setDurationInput('');
@@ -486,6 +592,7 @@ export const RaviAssistantView: React.FC<RaviAssistantViewProps> = ({
         kostha: patientKostha,
       });
       setMedicsResult(instantRes);
+      let targetAcharya = selectedAcharya;
       if (
         instantRes.ayurvedicAnalysis.acharyaProtocols &&
         instantRes.ayurvedicAnalysis.acharyaProtocols[selectedAcharya]?.isDirectlyMentioned === false
@@ -494,9 +601,12 @@ export const RaviAssistantView: React.FC<RaviAssistantViewProps> = ({
           (k) => instantRes.ayurvedicAnalysis.acharyaProtocols?.[k]?.isDirectlyMentioned
         );
         if (firstDirect) {
+          targetAcharya = firstDirect;
           setSelectedAcharya(firstDirect);
         }
       }
+      // Automatically search live AI shlokas for this selected disease
+      void handleSearchShlokaWithAI(p.name, targetAcharya);
     }
   };
 
@@ -552,6 +662,7 @@ export const RaviAssistantView: React.FC<RaviAssistantViewProps> = ({
       });
       setMedicsResult(res);
       setActiveShlokaIndex(0);
+      let targetAcharya = selectedAcharya;
       if (
         res.ayurvedicAnalysis.acharyaProtocols &&
         res.ayurvedicAnalysis.acharyaProtocols[selectedAcharya]?.isDirectlyMentioned === false
@@ -560,9 +671,15 @@ export const RaviAssistantView: React.FC<RaviAssistantViewProps> = ({
           (k) => res.ayurvedicAnalysis.acharyaProtocols?.[k]?.isDirectlyMentioned
         );
         if (firstDirect) {
+          targetAcharya = firstDirect;
           setSelectedAcharya(firstDirect);
         }
       }
+
+      const shlokaSearchTerm =
+        diseaseInput.trim() || res.ayurvedicAnalysis.vyadhiVinischaya || symptomsInput.trim();
+      setAiShlokaQuery(shlokaSearchTerm);
+      void handleSearchShlokaWithAI(shlokaSearchTerm, targetAcharya);
 
       // Pre-check all suggested medicines for prescription builder
       const initChecks: Record<string, boolean> = {};
@@ -1583,8 +1700,14 @@ Doctor: Dr. Ravi Shankar, BAMS`;
                         <select
                           value={selectedAcharya}
                           onChange={(e) => {
-                            setSelectedAcharya(e.target.value);
+                            const nextAcharya = e.target.value;
+                            setSelectedAcharya(nextAcharya);
                             setActiveShlokaIndex(0);
+                            const currentQuery =
+                              aiShlokaQuery.trim() ||
+                              diseaseInput.trim() ||
+                              medicsResult.ayurvedicAnalysis.vyadhiVinischaya;
+                            void handleSearchShlokaWithAI(currentQuery, nextAcharya);
                           }}
                           className="text-xs font-extrabold text-emerald-900 dark:text-emerald-100 bg-transparent border-0 cursor-pointer focus:outline-none pr-1"
                         >
@@ -1670,6 +1793,67 @@ Doctor: Dr. Ravi Shankar, BAMS`;
                       )}
                     </div>
                   )}
+
+                  {/* AI Samhita Shloka Search Bar (Dynamic AI Search instead of Prefixed Shlokas) */}
+                  <div className="p-3.5 rounded-2xl bg-gradient-to-r from-amber-50/90 via-teal-50/80 to-emerald-50/90 dark:from-amber-950/30 dark:via-slate-900 dark:to-emerald-950/30 border-2 border-amber-300/90 dark:border-amber-700/70 space-y-2.5">
+                    <div className="flex items-center justify-between flex-wrap gap-2">
+                      <div className="flex items-center gap-1.5">
+                        <Sparkles className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
+                        <span className="text-[11px] font-extrabold text-slate-900 dark:text-amber-200 uppercase tracking-wider">
+                          AI Samhita Shloka Search (Search Any Vyadhi, Symptom, Sutra or Yoga with AI)
+                        </span>
+                      </div>
+                      <span
+                        className={`px-2 py-0.5 rounded-full text-[9.5px] font-extrabold ${
+                          isSearchingShlokaAI
+                            ? 'bg-amber-500 text-white animate-pulse'
+                            : isShlokaAISourced
+                            ? 'bg-emerald-600 text-white'
+                            : 'bg-teal-600 text-white'
+                        }`}
+                      >
+                        {isSearchingShlokaAI
+                          ? 'Searching Samhitas via AI...'
+                          : isShlokaAISourced
+                          ? '✨ Live AI-Searched Shlokas Active'
+                          : 'AI Shloka Search Ready'}
+                      </span>
+                    </div>
+
+                    <div className="flex flex-col sm:flex-row gap-2">
+                      <input
+                        type="text"
+                        value={aiShlokaQuery}
+                        onChange={(e) => setAiShlokaQuery(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            void handleSearchShlokaWithAI(aiShlokaQuery, selectedAcharya);
+                          }
+                        }}
+                        placeholder="Type any disease, symptom, yoga or topic (e.g. Amavata Langhana, Pandu Roga, Gridhrasi Agnikarma, Jwara)..."
+                        className="flex-1 px-3 py-2 rounded-xl bg-white dark:bg-slate-800 border border-amber-300 dark:border-amber-700 text-xs font-semibold text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-500"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => void handleSearchShlokaWithAI(aiShlokaQuery, selectedAcharya)}
+                        disabled={isSearchingShlokaAI}
+                        className="px-4 py-2 rounded-xl bg-amber-600 hover:bg-amber-500 text-white font-extrabold text-xs flex items-center justify-center gap-1.5 cursor-pointer shadow-xs transition-all disabled:opacity-50 shrink-0"
+                      >
+                        {isSearchingShlokaAI ? (
+                          <>
+                            <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                            <span>AI Searching...</span>
+                          </>
+                        ) : (
+                          <>
+                            <Sparkles className="w-3.5 h-3.5" />
+                            <span>Search Shloka with AI</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  </div>
 
                   {/* Classical Disease Shloka Box */}
                   <div className="p-4 rounded-2xl bg-amber-50/80 dark:bg-amber-950/20 border-2 border-amber-300 dark:border-amber-700/80 space-y-2">

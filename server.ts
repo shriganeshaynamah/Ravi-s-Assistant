@@ -58,7 +58,7 @@ async function startServer() {
       }Dr. Ravi Shankar asks: ${message}`;
 
       const response = await ai.models.generateContent({
-        model: 'gemini-3.8-flash',
+        model: 'gemini-3-flash-preview',
         contents: prompt,
         config: {
           systemInstruction: `You are the personal AI Assistant for Dr. Ravi Shankar (BAMS Final Proff Student & Clinician).
@@ -110,7 +110,7 @@ Strict Instructions:
 - 3. Best Investment Plan (From His Budget & Loans POV): Do NOT blindly list all investment types like bonds/gold if they don't fit his current budget and loan burden. Calculate his real monthly surplus (Income minus Expenses + potential savings), decide how much must go to Loan Repayment first, and suggest only the 2 or 3 best, realistic investment vehicles for his remaining budget right now (plus what to scale up after loans are cleared).`;
 
       const response = await ai.models.generateContent({
-        model: 'gemini-3.8-flash',
+        model: 'gemini-3-flash-preview',
         contents: prompt,
         config: {
           responseMimeType: 'application/json',
@@ -201,7 +201,7 @@ Strict Instructions:
       }
 
       const response = await ai.models.generateContent({
-        model: 'gemini-3.8-flash',
+        model: 'gemini-3-flash-preview',
         contents: prompt,
         config: {
           responseMimeType: 'application/json',
@@ -214,6 +214,108 @@ Strict Instructions:
       console.error('Gemini Medical API Error:', error);
       res.status(500).json({
         error: error?.message || 'Failed to generate medical analysis',
+      });
+    }
+  });
+
+  // Server-side Gemini endpoint for AI Ayurvedic Shloka Search
+  app.post('/api/gemini/shloka-search', async (req, res) => {
+    try {
+      const { query, acharya = 'all' } = req.body || {};
+      if (!query || typeof query !== 'string') {
+        res.status(400).json({ error: 'Search query is required' });
+        return;
+      }
+
+      const ai = getGenAIClient();
+      if (!ai) {
+        res.status(503).json({ error: 'GEMINI_API_KEY is not configured on the server.' });
+        return;
+      }
+
+      const acharyaMapLabels: Record<string, string> = {
+        all: 'Classical Ayurvedic Samhitas (Charaka Samhita, Sushruta Samhita, Ashtanga Hridaya, Madhava Nidana, Chakradatta, Sharangadhara Samhita, Bhavaprakasha)',
+        charaka: 'Charaka Samhita (Acharya Charaka)',
+        sushruta: 'Sushruta Samhita (Acharya Sushruta)',
+        vagbhata: 'Ashtanga Hridaya / Ashtanga Sangraha (Acharya Vagbhata)',
+        chakradatta: 'Chakradatta (Acharya Chakrapani Datta)',
+        sharangadhara: 'Sharangadhara Samhita (Acharya Sharangadhara)',
+        madhava: 'Madhava Nidana (Acharya Madhavakara)',
+      };
+
+      const targetSamhita = acharyaMapLabels[acharya] || acharyaMapLabels.all;
+
+      const prompt = `You are an authoritative Ayurvedic Samhita Scholar & Clinical Consultant for Dr. Ravi Shankar (BAMS Doctor).
+Search and retrieve authentic classical Sanskrit Shlokas for the following medical query:
+Query / Disease / Topic: "${query}"
+Preferred Samhita / Acharya Authority: ${targetSamhita}
+
+Instructions:
+1. Provide authentic Sanskrit verses in Devanagari script, accurate Roman IAST/transliteration, exact Samhita book & Chapter/Verse citation, and clear clinical English translation/meaning.
+2. Include the primary Disease / Nidana / Samprapti / Lakshana Shloka AND 3 to 4 Chikitsa Sutra & Therapeutic Shlokas (covering Chikitsa Sutra, Shamana Yoga, and Shodhana/Panchakarma as applicable to "${query}").
+3. If the specific Acharya did not name a later disease directly (e.g. Amavata as a separate chapter in Brihattrayi), provide the most relevant classical verse from that Acharya (or Madhava Nidana / Chakradatta) and clearly state the exact reference.`;
+
+      const response = await ai.models.generateContent({
+        model: 'gemini-3-flash-preview',
+        contents: prompt,
+        config: {
+          responseMimeType: 'application/json',
+          temperature: 0.2,
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              queryTitle: {
+                type: Type.STRING,
+                description: 'Recognized Ayurvedic Vyadhi / Concept & Modern correlation title for the search query',
+              },
+              acharyaAuthority: {
+                type: Type.STRING,
+                description: 'Name of the Acharya / Samhita authority cited',
+              },
+              diseaseShloka: {
+                type: Type.OBJECT,
+                properties: {
+                  shlokaSanskrit: { type: Type.STRING, description: 'Full Sanskrit verse in Devanagari script' },
+                  shlokaTransliteration: { type: Type.STRING, description: 'Roman script transliteration' },
+                  meaning: { type: Type.STRING, description: 'Detailed English translation and clinical meaning' },
+                  sourceBook: { type: Type.STRING, description: 'Samhita name e.g. Charaka Samhita, Madhava Nidana, Sushruta Samhita' },
+                  chapterAndVerse: { type: Type.STRING, description: 'Exact Sthana, Chapter and Verse number e.g. Chikitsa Sthana 15/42' },
+                },
+                required: ['shlokaSanskrit', 'shlokaTransliteration', 'meaning', 'sourceBook', 'chapterAndVerse'],
+              },
+              chikitsaSutra: {
+                type: Type.STRING,
+                description: 'Key Chikitsa Sutra principle in Sanskrit + English summary',
+              },
+              chikitsaSutraReference: {
+                type: Type.STRING,
+                description: 'Samhita and chapter/verse reference for the Chikitsa Sutra',
+              },
+              chikitsaShlokas: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    title: { type: Type.STRING, description: 'Title of the Shloka (e.g. 1. Primary Chikitsa Sutra, 2. Classical Kwatha/Vati Yoga, 3. Shodhana Protocol)' },
+                    reference: { type: Type.STRING, description: 'Exact Samhita, Sthana, Chapter & Verse citation' },
+                    shlokaSanskrit: { type: Type.STRING, description: 'Authentic Sanskrit verse in Devanagari script' },
+                    shlokaTransliteration: { type: Type.STRING, description: 'Roman transliteration of the verse' },
+                    meaning: { type: Type.STRING, description: 'Complete English clinical translation and indication' },
+                  },
+                  required: ['title', 'reference', 'shlokaSanskrit', 'shlokaTransliteration', 'meaning'],
+                },
+              },
+            },
+            required: ['queryTitle', 'acharyaAuthority', 'diseaseShloka', 'chikitsaSutra', 'chikitsaSutraReference', 'chikitsaShlokas'],
+          },
+        },
+      });
+
+      res.json({ text: response.text || '' });
+    } catch (error: any) {
+      console.error('Gemini Shloka Search API Error:', error);
+      res.status(500).json({
+        error: error?.message || 'Failed to search Shlokas with AI',
       });
     }
   });

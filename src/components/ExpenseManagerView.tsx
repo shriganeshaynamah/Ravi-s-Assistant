@@ -1590,6 +1590,44 @@ export const ExpenseManagerView: React.FC<ExpenseManagerViewProps> = ({
       {/* ================= SECTION 2: LOANS (Renamed to Loans) ================= */}
       {activeTab === 'loans' && (
         <div className="space-y-4">
+          {/* Overall Loans Summary Cards: Total Loan Amount, Total Paid, Total Remaining */}
+          {(() => {
+            const totalLoanAmount = loans.reduce((sum, l) => sum + (l.principalAmount || 0), 0);
+            const totalLoanPaid = loans.reduce((sum, l) => sum + (l.totalPaid || 0), 0);
+            const totalLoanRemaining = loans.reduce(
+              (sum, l) => sum + Math.max(0, (l.principalAmount || 0) - (l.totalPaid || 0)),
+              0
+            );
+            return (
+              <div className="grid grid-cols-3 gap-2 text-xs">
+                <div className="p-2.5 rounded-2xl bg-indigo-50 dark:bg-indigo-950/35 border border-indigo-200 dark:border-indigo-800/60 text-center">
+                  <span className="text-[10px] text-slate-600 dark:text-slate-300 uppercase font-bold block truncate">
+                    Total Loan Amount
+                  </span>
+                  <p className="text-sm font-black text-indigo-700 dark:text-indigo-400 font-mono mt-0.5">
+                    ₹{totalLoanAmount.toLocaleString('en-IN')}
+                  </p>
+                </div>
+                <div className="p-2.5 rounded-2xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800/60 text-center">
+                  <span className="text-[10px] text-slate-600 dark:text-slate-300 uppercase font-bold block truncate">
+                    Total Paid
+                  </span>
+                  <p className="text-sm font-black text-emerald-700 dark:text-emerald-400 font-mono mt-0.5">
+                    ₹{totalLoanPaid.toLocaleString('en-IN')}
+                  </p>
+                </div>
+                <div className="p-2.5 rounded-2xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800/60 text-center">
+                  <span className="text-[10px] text-slate-600 dark:text-slate-300 uppercase font-bold block truncate">
+                    Total Remaining
+                  </span>
+                  <p className="text-sm font-black text-amber-700 dark:text-amber-400 font-mono mt-0.5">
+                    ₹{totalLoanRemaining.toLocaleString('en-IN')}
+                  </p>
+                </div>
+              </div>
+            );
+          })()}
+
           <div className="flex items-center justify-between">
             {/* EMI Calculator button (Without "Open") */}
             <button

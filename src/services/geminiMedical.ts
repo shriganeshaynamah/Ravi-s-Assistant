@@ -374,6 +374,13 @@ export interface MedicalAnalysisResult {
       chapterAndVerse: string;
     };
     chikitsaSutra: string;
+    chikitsaShlokas?: {
+      title: string;
+      reference: string;
+      shlokaSanskrit: string;
+      shlokaTransliteration: string;
+      meaning: string;
+    }[];
     shamanaChikitsa: {
       category: string;
       medicineName: string;
@@ -1146,6 +1153,29 @@ Provide an authoritative, medical-grade analysis following this exact JSON struc
       "chapterAndVerse": "Specific Chapter and Shloka number"
     },
     "chikitsaSutra": "Classical treatment formula shloka or phrase",
+    "chikitsaShlokas": [
+      {
+        "title": "1. Primary Chikitsa Sutra / Line of Treatment",
+        "reference": "Exact Samhita, Sthana, Chapter & Verse number",
+        "shlokaSanskrit": "Authentic Sanskrit verse in Devanagari script",
+        "shlokaTransliteration": "Roman script transliteration",
+        "meaning": "Complete English translation and clinical application"
+      },
+      {
+        "title": "2. Classical Shamana Yoga / Kwatha / Vati Shloka",
+        "reference": "Exact Samhita, Sthana, Chapter & Verse number",
+        "shlokaSanskrit": "Authentic Sanskrit verse in Devanagari script",
+        "shlokaTransliteration": "Roman script transliteration",
+        "meaning": "Complete English translation and clinical indication"
+      },
+      {
+        "title": "3. Shodhana / Panchakarma Protocol Shloka",
+        "reference": "Exact Samhita, Sthana, Chapter & Verse number",
+        "shlokaSanskrit": "Authentic Sanskrit verse in Devanagari script",
+        "shlokaTransliteration": "Roman script transliteration",
+        "meaning": "Complete English translation and procedural indication"
+      }
+    ],
     "shamanaChikitsa": [
       { "category": "Kwatha/Vati/Guggulu/Churna/Asava", "medicineName": "...", "dosage": "...", "anupana": "...", "timing": "...", "indications": "..." }
     ],
@@ -1236,6 +1266,46 @@ Return ONLY raw valid JSON.`;
           const baseline = getInstantClinicalAnalysis(query);
           const dName = query.diseaseName || parsed.ayurvedicAnalysis.vyadhiVinischaya;
           const acharyaMap = getAcharyaProtocols(dName, parsed.ayurvedicAnalysis);
+
+          // Ensure AI-generated shlokas take priority over static prefixed protocols
+          if (parsed.ayurvedicAnalysis.shlokaReference?.shlokaSanskrit) {
+            const aiShlokaRef = parsed.ayurvedicAnalysis.shlokaReference;
+            const aiChikitsaSutra = parsed.ayurvedicAnalysis.chikitsaSutra;
+            const aiChikitsaShlokas =
+              Array.isArray(parsed.ayurvedicAnalysis.chikitsaShlokas) &&
+              parsed.ayurvedicAnalysis.chikitsaShlokas.length > 0
+                ? parsed.ayurvedicAnalysis.chikitsaShlokas
+                : undefined;
+
+            Object.keys(acharyaMap).forEach((key) => {
+              const proto = acharyaMap[key];
+              if (!proto) return;
+              // Update primary Charaka or matching Acharya entry with live AI-searched shlokas
+              const srcLower = (aiShlokaRef.sourceBook || '').toLowerCase();
+              const matchesThisAcharya =
+                (key === 'charaka' && (srcLower.includes('charak') || !srcLower)) ||
+                (key === 'sushruta' && srcLower.includes('sushrut')) ||
+                (key === 'vagbhata' && (srcLower.includes('ashtang') || srcLower.includes('vagbhat'))) ||
+                (key === 'chakradatta' && srcLower.includes('chakra')) ||
+                (key === 'sharangadhara' && srcLower.includes('sharang'));
+
+              if (matchesThisAcharya || key === 'charaka') {
+                proto.isDirectlyMentioned = true;
+                proto.shlokaReference = aiShlokaRef;
+                proto.diseaseReference = `${aiShlokaRef.sourceBook} (${aiShlokaRef.chapterAndVerse})`;
+                if (aiChikitsaSutra) {
+                  proto.chikitsaSutra = aiChikitsaSutra;
+                }
+                if (aiChikitsaShlokas) {
+                  proto.chikitsaShlokas = aiChikitsaShlokas;
+                  proto.chikitsaSutraReference =
+                    aiChikitsaShlokas[0]?.reference ||
+                    `${aiShlokaRef.sourceBook} (${aiShlokaRef.chapterAndVerse})`;
+                }
+              }
+            });
+          }
+
           parsed.ayurvedicAnalysis.acharyaProtocols = acharyaMap;
 
           // Only use preset fallbacks if AI returned empty arrays/fields
@@ -2510,5 +2580,84 @@ export const chatWithPersonalAI = async (
   }
 
   return `Namaste Dr. Ravi! Here is your live snapshot & answer:\n• **Habits Today:** ${completedHabits.length}/${context.habits.length} done (${pendingHabits.length} pending)\n• **Pending Tasks:** ${pendingTasks.length} in Keep To-Do\n• **Finances:** ₹${monthlyEmi.toLocaleString('en-IN')}/mo EMI | ₹${totalValuation.toLocaleString('en-IN')} Portfolio | ₹${totalExpense.toLocaleString('en-IN')} Expenses\n• **Academic Focus:** ${activeMilestone ? activeMilestone.title : 'BAMS Final Proff'}\n\nAsk me anything specific about your **Best Investment Plan (Stable Money FD 8.50%, RD, SIP, Bonds), Loan Clearance Strategy, Expense Reduction, BAMS study plan, or Ayurvedic clinical treatments**!`;
+};
+
+export interface AIShlokaSearchResult {
+  queryTitle: string;
+  acharyaAuthority: string;
+  diseaseShloka: {
+    shlokaSanskrit: string;
+    shlokaTransliteration: string;
+    meaning: string;
+    sourceBook: string;
+    chapterAndVerse: string;
+  };
+  chikitsaSutra: string;
+  chikitsaSutraReference: string;
+  chikitsaShlokas: {
+    title: string;
+    reference: string;
+    shlokaSanskrit: string;
+    shlokaTransliteration: string;
+    meaning: string;
+  }[];
+  isLiveAI?: boolean;
+}
+
+export const searchShlokasWithAI = async (
+  query: string,
+  acharya: string = 'all'
+): Promise<AIShlokaSearchResult> => {
+  const cleanQuery = query.trim() || 'Jwara / General Vyadhi';
+  try {
+    const res = await fetch('/api/gemini/shloka-search', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query: cleanQuery, acharya }),
+    });
+
+    if (res.ok) {
+      const data = await res.json();
+      if (data && data.text) {
+        const parsed = JSON.parse(data.text) as AIShlokaSearchResult;
+        if (parsed && parsed.diseaseShloka?.shlokaSanskrit) {
+          return {
+            ...parsed,
+            isLiveAI: true,
+          };
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('AI Shloka Search API fallback triggered:', err);
+  }
+
+  // Fallback to local clinical analysis if offline or API key unavailable
+  const fallbackCase = getInstantClinicalAnalysis({ diseaseName: cleanQuery, symptoms: cleanQuery });
+  const acharyaKey = acharya === 'all' ? 'charaka' : acharya;
+  const proto = fallbackCase.ayurvedicAnalysis.acharyaProtocols?.[acharyaKey];
+  const shlokaRef = proto?.shlokaReference || fallbackCase.ayurvedicAnalysis.shlokaReference;
+
+  return {
+    queryTitle: fallbackCase.ayurvedicAnalysis.vyadhiVinischaya,
+    acharyaAuthority: proto?.acharyaName || 'Classical Samhita',
+    diseaseShloka: shlokaRef,
+    chikitsaSutra: proto?.chikitsaSutra || fallbackCase.ayurvedicAnalysis.chikitsaSutra,
+    chikitsaSutraReference:
+      proto?.chikitsaSutraReference || `${shlokaRef.sourceBook} (${shlokaRef.chapterAndVerse})`,
+    chikitsaShlokas:
+      proto?.chikitsaShlokas && proto.chikitsaShlokas.length > 0
+        ? proto.chikitsaShlokas
+        : [
+            {
+              title: '1. Classical Chikitsa Sutra',
+              reference: `${shlokaRef.sourceBook} (${shlokaRef.chapterAndVerse})`,
+              shlokaSanskrit: shlokaRef.shlokaSanskrit,
+              shlokaTransliteration: shlokaRef.shlokaTransliteration,
+              meaning: shlokaRef.meaning,
+            },
+          ],
+    isLiveAI: false,
+  };
 };
 
